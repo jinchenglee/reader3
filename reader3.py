@@ -13,6 +13,7 @@ from urllib.parse import unquote
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup, Comment
+import fitz # PyMuPDF
 
 # --- Data structures ---
 
@@ -283,6 +284,52 @@ def process_epub(epub_path: str, output_dir: str) -> Book:
     return final_book
 
 
+def process_pdf(pdf_path: str, output_dir: str) -> Book:
+    """
+    Extracts metadata from a PDF and returns a Book object.
+    Does NOT convert pages to HTML/Images.
+    """
+    print(f"Processing PDF {pdf_path}...")
+
+    # 1. Load PDF
+    doc = fitz.open(pdf_path)
+
+    # 2. Extract Metadata
+    meta = doc.metadata
+
+    # PyMuPDF metadata keys: format, title, author, subject, keywords, creator, producer, creationDate, modDate
+    metadata = BookMetadata(
+        title=meta.get('title') or os.path.basename(pdf_path).replace('.pdf', ''),
+        language="en", # default
+        authors=[meta.get('author')] if meta.get('author') else [],
+        description=meta.get('subject'),
+        publisher=meta.get('producer'),
+        date=meta.get('creationDate'),
+        identifiers=[],
+        subjects=meta.get('keywords', '').split(',') if meta.get('keywords') else []
+    )
+
+    # 3. Create Output Directory
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save absolute path to original file in the book object? 
+    # Or better: Copy the PDF to the output directory so it's self-contained
+    shutil.copy2(pdf_path, os.path.join(output_dir, "original.pdf"))
+
+    final_book = Book(
+        metadata=metadata,
+        spine=[],
+        toc=[],
+        images={},
+        source_file="original.pdf", # We will look for this in server
+        processed_at=datetime.now().isoformat()
+    )
+
+    return final_book
+
+
 def save_to_pickle(book: Book, output_dir: str):
     p_path = os.path.join(output_dir, 'book.pkl')
     with open(p_path, 'wb') as f:
@@ -301,9 +348,14 @@ if __name__ == "__main__":
 
     epub_file = sys.argv[1]
     assert os.path.exists(epub_file), "File not found."
-    out_dir = os.path.splitext(epub_file)[0] + "_data"
+    base_name = os.path.splitext(os.path.basename(epub_file))[0] + "_data"
+    out_dir = os.path.join("books", base_name)
+    os.makedirs("books", exist_ok=True)
 
-    book_obj = process_epub(epub_file, out_dir)
+    if epub_file.lower().endswith('.pdf'):
+        book_obj = process_pdf(epub_file, out_dir)
+    else:
+        book_obj = process_epub(epub_file, out_dir)
     save_to_pickle(book_obj, out_dir)
     print("\n--- Summary ---")
     print(f"Title: {book_obj.metadata.title}")

@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ book.metadata.title }}</title>
+    <!-- PDF.js Styles -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
+
+    <style>
+        :root {
+            --header-height: 50px;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        /* Header */
+        header {
+            height: var(--header-height);
+            background: #2c3e50;
+            color: white;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            border-bottom: 1px solid #444;
+            flex-shrink: 0;
+            justify-content: space-between;
+            z-index: 10;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .nav-home {
+            color: #ccc;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+
+        .nav-home:hover {
+            color: white;
+        }
+
+        .book-title {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 400px;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-icon {
+            background: none;
+            border: none;
+            color: #ccc;
+            cursor: pointer;
+            font-size: 1.2em;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        .btn-icon:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .page-info {
+            font-size: 0.9em;
+            color: #ccc;
+            min-width: 80px;
+            text-align: center;
+        }
+
+        /* Main Container: Split Pane */
+        #main-container {
+            display: flex;
+            flex: 1;
+            height: calc(100vh - var(--header-height));
+            overflow: hidden;
+        }
+
+        /* PDF Viewer Area */
+        #pdf-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #525659;
+            position: relative;
+            overflow: hidden;
+            transition: width 0.3s ease;
+        }
+
+        #pdf-scroll-container {
+            flex: 1;
+            overflow: auto;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        #pdf-content {
+            position: relative;
+            /* Anchor for absolute children */
+        }
+
+        /* The canvas where PDF is drawn */
+        canvas {
+            display: block;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Text Layer for Selection */
+        .textLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+            opacity: 0.2;
+            line-height: 1.0;
+            /* CRITICAL FIX: Ensure transform origin is top-left so scale matches canvas */
+            transform-origin: 0 0;
+        }
+
+        /* PDF ToC Sidebar */
+        #toc-sidebar {
+            width: 250px;
+            background: #f8f9fa;
+            border-right: 1px solid #ccc;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            flex-shrink: 0;
+            padding: 10px;
+        }
+
+        .toc-item {
+            padding: 4px 8px;
+            cursor: pointer;
+            color: #333;
+            font-size: 0.9em;
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .toc-item:hover {
+            background: #e9ecef;
+            color: #000;
+        }
+
+        .toc-depth-1 {
+            padding-left: 10px;
+        }
+
+        .toc-depth-2 {
+            padding-left: 20px;
+        }
+
+        .toc-depth-3 {
+            padding-left: 30px;
+        }
+
+        .nav-header {
+            font-weight: bold;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="header-left">
+            <a href="/" class="nav-home">← Back</a>
+            <span class="book-title" title="{{ book.metadata.title }}">{{ book.metadata.title }}</span>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="header-controls">
+            <button class="btn-icon" id="prev-page" title="Previous Page">◀</button>
+            <span class="page-info">Page <span id="page-num">--</span> / <span id="page-count">--</span></span>
+            <button class="btn-icon" id="next-page" title="Next Page">▶</button>
+            <span style="border-left: 1px solid #555; height: 20px; margin: 0 5px;"></span>
+            <button class="btn-icon" id="zoom-out" title="Zoom Out">−</button>
+            <button class="btn-icon" id="zoom-in" title="Zoom In">+</button>
+            <span style="border-left: 1px solid #555; height: 20px; margin: 0 5px;"></span>
+            <button class="btn-icon" id="fit-width" title="Fit Width" style="font-size: 0.8em;">↔ Width</button>
+            <button class="btn-icon" id="fit-page" title="Fit Page" style="font-size: 0.8em;">↕ Page</button>
+            <button class="btn-icon" id="toggle-toc" title="Table of Contents" style="font-size: 0.8em;">📑 ToC</button>
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <button id="toggle-chat-btn" class="btn-icon" title="Toggle Chat"
+                style="font-size: 0.9em; border: 1px solid #555;">💬 Chat</button>
+        </div>
+    </header>
+
+    <div id="main-container">
+        <!-- PDF ToC Sidebar -->
+        <div id="toc-sidebar" style="display:none;">
+            <div class="nav-header">Table of Contents</div>
+            <div id="toc-list"></div>
+        </div>
+
+        <!-- PDF Viewer -->
+        <div id="pdf-wrapper">
+            <div id="pdf-scroll-container">
+                <div id="pdf-content">
+                    <canvas id="the-canvas"></canvas>
+                    <div id="text-layer" class="textLayer"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Sidebar Included Here -->
+        {% include "components/chat_component.html" %}
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        // PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const url = "{{ pdf_url }}";
+        let pdfDoc = null,
+            pageNum = 1,
+            pageRendering = false,
+            pageNumPending = null,
+            scale = 1.0,
+            canvas = document.getElementById('the-canvas'),
+            ctx = canvas.getContext('2d'),
+            textLayerDiv = document.getElementById('text-layer');
+
+        // --- PDF Rendering ---
+
+        function renderPage(num) {
+            pageRendering = true;
+            // Fetch page
+            pdfDoc.getPage(num).then(function (page) {
+                const viewport = page.getViewport({ scale: scale });
+                const dpr = window.devicePixelRatio || 1;
+
+                // Set canvas resolution for HiDPI (render at higher res)
+                canvas.width = Math.floor(viewport.width * dpr);
+                canvas.height = Math.floor(viewport.height * dpr);
+
+                // Set CSS display size (visual size)
+                canvas.style.width = Math.floor(viewport.width) + 'px';
+                canvas.style.height = Math.floor(viewport.height) + 'px';
+
+                // Align Text Layer dimensions
+                textLayerDiv.style.height = Math.floor(viewport.height) + 'px';
+                textLayerDiv.style.width = Math.floor(viewport.width) + 'px';
+
+                // CSS Variable for text layer scaling (PDF.js standard requirement)
+                textLayerDiv.style.setProperty('--scale-factor', scale);
+
+                // Scale canvas context to match HiDPI
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+                // Render PDF page into canvas context
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: viewport
+                };
+                const renderTask = page.render(renderContext);
+
+                // Wait for render to finish
+                renderTask.promise.then(function () {
+                    pageRendering = false;
+
+                    // Render Text Layer
+                    return page.getTextContent();
+                }).then(function (textContent) {
+                    textLayerDiv.innerHTML = ""; // Clear old
+
+                    pdfjsLib.renderTextLayer({
+                        textContentSource: textContent,
+                        container: textLayerDiv,
+                        viewport: viewport,
+                        textDivs: []
+                    });
+
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+            });
+
+            // Update page counters
+            document.getElementById('page-num').textContent = num;
+        }
+
+        function queueRenderPage(num) {
+            if (pageRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        function onPrevPage() {
+            if (pageNum <= 1) return;
+            pageNum--;
+            queueRenderPage(pageNum);
+        }
+        function onNextPage() {
+            if (pageNum >= pdfDoc.numPages) return;
+            pageNum++;
+            queueRenderPage(pageNum);
+        }
+        function onZoomIn() { scale += 0.2; renderPage(pageNum); }
+        function onZoomOut() { if (scale > 0.4) scale -= 0.2; renderPage(pageNum); }
+
+        function onFitWidth() {
+            pdfDoc.getPage(pageNum).then(function (page) {
+                const baseViewport = page.getViewport({ scale: 1.0 });
+                const container = document.getElementById('pdf-scroll-container');
+                const availableWidth = container.clientWidth - 40; // subtract padding
+                scale = availableWidth / baseViewport.width;
+                renderPage(pageNum);
+            });
+        }
+
+        function onFitPage() {
+            pdfDoc.getPage(pageNum).then(function (page) {
+                const baseViewport = page.getViewport({ scale: 1.0 });
+                const container = document.getElementById('pdf-scroll-container');
+                const availableWidth = container.clientWidth - 40;
+                const availableHeight = container.clientHeight - 40;
+                const scaleW = availableWidth / baseViewport.width;
+                const scaleH = availableHeight / baseViewport.height;
+                scale = Math.min(scaleW, scaleH);
+                renderPage(pageNum);
+            });
+        }
+
+        function onToggleToc() {
+            const tocSidebar = document.getElementById('toc-sidebar');
+            if (tocSidebar.style.display === 'none') {
+                tocSidebar.style.display = 'flex';
+                // Populate ToC from PDF outline if not already done
+                if (!tocSidebar.dataset.loaded) {
+                    pdfDoc.getOutline().then(function (outline) {
+                        const tocList = document.getElementById('toc-list');
+                        tocList.innerHTML = '';
+                        if (outline && outline.length > 0) {
+                            renderOutline(outline, tocList, 1);
+                        } else {
+                            tocList.innerHTML = '<div style="color:#999; padding:10px;">No table of contents available in this PDF.</div>';
+                        }
+                        tocSidebar.dataset.loaded = 'true';
+                    });
+                }
+            } else {
+                tocSidebar.style.display = 'none';
+            }
+        }
+
+        function renderOutline(items, container, depth) {
+            items.forEach(function (item) {
+                const div = document.createElement('div');
+                div.className = 'toc-item toc-depth-' + Math.min(depth, 3);
+                div.textContent = item.title;
+                div.addEventListener('click', function () {
+                    // Navigate to the destination
+                    if (item.dest) {
+                        pdfDoc.getDestination(item.dest).then(function (dest) {
+                            if (dest) {
+                                pdfDoc.getPageIndex(dest[0]).then(function (pageIndex) {
+                                    pageNum = pageIndex + 1;
+                                    queueRenderPage(pageNum);
+                                });
+                            }
+                        });
+                    } else if (item.url) {
+                        window.open(item.url, '_blank');
+                    }
+                });
+                container.appendChild(div);
+                if (item.items && item.items.length > 0) {
+                    renderOutline(item.items, container, depth + 1);
+                }
+            });
+        }
+
+        document.getElementById('prev-page').addEventListener('click', onPrevPage);
+        document.getElementById('next-page').addEventListener('click', onNextPage);
+        document.getElementById('zoom-in').addEventListener('click', onZoomIn);
+        document.getElementById('zoom-out').addEventListener('click', onZoomOut);
+        document.getElementById('fit-width').addEventListener('click', onFitWidth);
+        document.getElementById('fit-page').addEventListener('click', onFitPage);
+        document.getElementById('toggle-toc').addEventListener('click', onToggleToc);
+
+        // Load Document
+        pdfjsLib.getDocument(url).promise.then(function (pdfDoc_) {
+            pdfDoc = pdfDoc_;
+            document.getElementById('page-count').textContent = pdfDoc.numPages;
+            renderPage(pageNum);
+        });
+
+        // --- Text Selection & Context - Override/Hook ---
+
+        document.addEventListener('selectionchange', () => {
+            const selection = window.getSelection();
+            const text = selection.toString().trim();
+
+            if (text && text.length > 0) {
+                // Check if selection is inside pdf
+                if (document.getElementById('pdf-wrapper').contains(selection.anchorNode)) {
+                    // Call the shared component function
+                    if (window.updateChatContext) {
+                        window.updateChatContext(text);
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

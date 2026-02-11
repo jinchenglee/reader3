@@ -8,19 +8,33 @@ This project was 90% vibe coded just to illustrate how one can very easily [read
 
 ## Usage
 
-The project uses [uv](https://docs.astral.sh/uv/). So for example, download [Dracula EPUB3](https://www.gutenberg.org/ebooks/345) to this directory as `dracula.epub`, then:
+The project uses [uv](https://docs.astral.sh/uv/). All books (source files and processed data) live in the `books/` subdirectory. For example, download [Dracula EPUB3](https://www.gutenberg.org/ebooks/345) into `books/`, then:
 
 ```bash
-uv run reader3.py dracula.epub
+uv run reader3.py books/dracula.epub
 ```
 
-This creates the directory `dracula_data`, which registers the book to your local library. We can then run the server:
+This creates the directory `books/dracula_data`, which registers the book to your local library.
+
+### PDF Support
+
+You can also read PDF files. Just run the same command on a `.pdf` file:
+
+```bash
+uv run reader3.py books/mydocument.pdf
+```
+
+This will register the PDF in the library. When you open it, the browser's native PDF viewer will be used.
+
+### Running the Server
+
+We can then run the server:
 
 ```bash
 uv run server.py
 ```
 
-And visit [localhost:8123](http://localhost:8123/) to see your current Library. You can easily add more books, or delete them from your library by deleting the folder. It's not supposed to be complicated or complex.
+And visit [localhost:8123](http://localhost:8123/) to see your current Library. You can easily add more books, or delete them from your library by deleting their folder under `books/`. It's not supposed to be complicated or complex.
 
 ## License
 
