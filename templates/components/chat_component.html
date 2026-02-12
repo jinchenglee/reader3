@@ -432,6 +432,7 @@
             chatSidebar.classList.toggle('collapsed');
             const isCollapsed = chatSidebar.classList.contains('collapsed');
             toggleBtn.textContent = isCollapsed ? '💬 Show Chat' : '💬 Hide Chat';
+            localStorage.setItem('chat_collapsed', isCollapsed ? '1' : '0');
             // Disable transition during drag if previously set, re-enable it
             chatSidebar.style.transition = 'margin-right 0.3s ease';
         });
@@ -466,6 +467,22 @@
             isResizing = false;
             document.body.style.cursor = '';
             chatSidebar.style.transition = 'margin-right 0.3s ease'; // Re-enable toggle transition
+            // Persist the width
+            const currentWidth = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width').trim();
+            localStorage.setItem('chat_sidebar_width', currentWidth);
         }
     });
+
+    // --- Restore persisted sidebar width and collapsed state ---
+    (function restoreChatState() {
+        const savedWidth = localStorage.getItem('chat_sidebar_width');
+        if (savedWidth) {
+            document.documentElement.style.setProperty('--sidebar-width', savedWidth);
+        }
+        const savedCollapsed = localStorage.getItem('chat_collapsed');
+        if (savedCollapsed === '1') {
+            chatSidebar.classList.add('collapsed');
+            if (toggleBtn) toggleBtn.textContent = '💬 Show Chat';
+        }
+    })();
 </script>
