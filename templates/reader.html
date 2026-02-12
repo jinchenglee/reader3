@@ -389,6 +389,31 @@
                 </div>
             </div>
 
+            <!-- Set bookId before chat component so loadChatHistory can use it -->
+            <!-- Data Injection: Prevent formatter errors by keeping Jinja2 out of JS logic -->
+            <script type="application/json" id="reader-data">
+            {
+                "bookId": "{{ book_id }}",
+                "initialScroll": {{ initial_scroll }},
+                "initialZoom": {{ initial_zoom }},
+                "chapterIndex": {{ chapter_index }},
+                "totalChapters": {{ book.spine|length }},
+                "spineMap": {
+                    {% for ch in book.spine %}
+                    "{{ ch.href }}": {{ ch.order }}{% if not loop.last %},{% endif %}
+                    {% endfor %}
+                }
+            }
+            </script>
+            <script>
+                try {
+                    window.readerData = JSON.parse(document.getElementById('reader-data').textContent);
+                    window.bookId = window.readerData.bookId;
+                } catch (e) {
+                    console.error("Failed to parse reader data", e);
+                }
+            </script>
+
             <!-- CHAT SIDEBAR (Shared) -->
             {% include "components/chat_component.html" %}
 
@@ -397,10 +422,16 @@
 
     <script>
         // --- State & Persistence ---
-        const bookId = "{{ book_id }}";
-        let chapterIndex = {{ chapter_index }};
-        let currentZoom = {{ initial_zoom }}; // Restore zoom
-        const totalChapters = {{ book.spine|length }};
+        // Data is already parsed in the block above
+        const config = window.readerData || {};
+
+        // window.bookId is already set in the previous block
+        const bookId = config.bookId;
+
+        let chapterIndex = config.chapterIndex;
+        let currentZoom = config.initialZoom;
+        const totalChapters = config.totalChapters;
+        const spineMap = config.spineMap || {};
 
         const zoomStep = 10;
         const minZoom = 50;
@@ -410,28 +441,29 @@
 
         // Restore Scroll Position
         window.addEventListener('load', () => {
-            const initScroll = {{ initial_scroll }};
+            const initScroll = config.initialScroll;
             if (initScroll > 0) {
                 contentScroll.scrollTop = initScroll;
             }
-            applyZoom(); // Apply initial zoom
+            applyZoom();
         });
 
         // Save Progress
         let saveTimeout;
         function saveProgress() {
-            const data = {
-                chapter_index: chapterIndex,
-                page_num: 1, // Not used for EPUB but consistent
-                scroll_position: contentScroll.scrollTop,
-                zoom: currentZoom
-            };
-
-            fetch(`/api/progress/${bookId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            }).catch(console.error);
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                fetch(`/api/progress/${bookId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chapter_index: chapterIndex,
+                        page_num: 1, // Not used for EPUB but consistent
+                        scroll_position: contentScroll.scrollTop,
+                        zoom: currentZoom
+                    })
+                });
+            }, 1000);
         }
 
         function debounceSave() {
@@ -524,11 +556,7 @@
         });
 
         // --- TOC Navigation Logic ---
-        const spineMap = {
-            {% for ch in book.spine %}
-        "{{ ch.href }}": {{ ch.order }},
-        {% endfor %}
-        };
+        // spineMap is already loaded from config above
 
         // ==============================================
         // AJAX Chapter Loading (no full page reload)

@@ -4,27 +4,33 @@
 
 A lightweight, self-hosted EPUB reader that lets you read through EPUB books one chapter at a time. This makes it very easy to copy paste the contents of a chapter to an LLM, to read along. Basically - get epub books (e.g. [Project Gutenberg](https://www.gutenberg.org/) has many), open them up in this reader, copy paste text around to your favorite LLM, and read together and along.
 
-This project was 90% vibe coded just to illustrate how one can very easily [read books together with LLMs](https://x.com/karpathy/status/1990577951671509438). I'm not going to support it in any way, it's provided here as is for other people's inspiration and I don't intend to improve it. Code is ephemeral now and libraries are over, ask your LLM to change it in whatever way you like.
+This project was 90% vibe coded just to illustrate how one can very easily [read books together with LLMs](https://x.com/karpathy/status/1990577951671509438) by Mr. Karpathy. 
+
+After branching off, I added pdf support, and a chat pane to allow the similar behavior like Gemini pane when you enable it inside Chrome browser. Currently, it only supports querying with selected text automatically to remote LLMs of your choice. Some interesting ideas could be starting from here, like how to do prompt and context management for the LLMs to make it more effective.
 
 ## Usage
 
-The project uses [uv](https://docs.astral.sh/uv/). All books (source files and processed data) live in the `books/` subdirectory. For example, download [Dracula EPUB3](https://www.gutenberg.org/ebooks/345) into `books/`, then:
+The project uses [uv](https://docs.astral.sh/uv/). All books (source files and processed data) live in the `books/` subdirectory. For example, download [Dracula EPUB3](https://www.gutenberg.org/ebooks/345), then:
 
 ```bash
-uv run reader3.py books/dracula.epub
+uv run reader3.py ~/Downloads/dracula.epub
 ```
 
 This creates the directory `books/dracula_data`, which registers the book to your local library.
 
-### PDF Support
-
-You can also read PDF files. Just run the same command on a `.pdf` file:
+Similarly, you can also import PDF files. Just run the same command on a `.pdf` file:
 
 ```bash
-uv run reader3.py books/mydocument.pdf
+uv run reader3.py ~/Downloads/mydocument.pdf
 ```
 
-This will register the PDF in the library. When you open it, the browser's native PDF viewer will be used.
+### Testing
+
+Run the integration test suite to verify the application:
+
+```bash
+uv run pytest tests/test_server.py
+```
 
 ### Running the Server
 

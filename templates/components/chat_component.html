@@ -232,7 +232,11 @@
     <div id="resize-handle" title="Drag to resize"></div>
     <div class="chat-header">
         <span>AI Assistant</span>
-        <button class="btn-icon" id="settings-btn" style="background:none; border:none; cursor:pointer;">⚙️</button>
+        <div style="display: flex; gap: 5px; align-items: center;">
+            <button class="btn-icon" id="clear-chat-btn" title="Clear chat history"
+                style="background:none; border:none; cursor:pointer; font-size:0.85em; color:#999;">🗑️ Clear</button>
+            <button class="btn-icon" id="settings-btn" style="background:none; border:none; cursor:pointer;">⚙️</button>
+        </div>
     </div>
 
     <div class="chat-messages" id="chat-messages">
@@ -242,7 +246,11 @@
     </div>
 
     <div class="chat-input-area">
-        <div id="chat-context"></div>
+        <div id="chat-context">
+            <span id="chat-context-text"></span>
+            <button id="clear-context-btn" title="Clear selection"
+                style="float:right; background:none; border:none; cursor:pointer; color:#999; font-size:1.1em; padding:0 4px; line-height:1;">×</button>
+        </div>
         <div class="chat-controls">
             <textarea id="chat-input" placeholder="Ask a question..." rows="1"></textarea>
             <button class="btn-send" id="send-btn">Send</button>
@@ -298,30 +306,83 @@
     const contextDiv = document.getElementById('chat-context');
 
     let currentSelectedContext = "";
+    let chatHistory = []; // In-memory list of {role, content}
 
     // Exposed function for external scripts to update context
     window.updateChatContext = function (text) {
         currentSelectedContext = text;
+        const contextTextSpan = document.getElementById('chat-context-text');
         if (text) {
             contextDiv.style.display = 'block';
-            contextDiv.textContent = `Selected: "${text.substring(0, 100)}..."`;
-
-            // Auto-open sidebar if closed? Optional.
-            if (chatSidebar.classList.contains('collapsed')) {
-                // chatSidebar.classList.remove('collapsed'); // Maybe annoying if reading?
-            }
+            contextTextSpan.textContent = `Selected: "${text.substring(0, 100)}..."`;
         } else {
             contextDiv.style.display = 'none';
+            contextTextSpan.textContent = '';
         }
     };
 
-    function appendMessage(role, text) {
+    // Clear context button
+    document.getElementById('clear-context-btn').addEventListener('click', function () {
+        currentSelectedContext = "";
+        contextDiv.style.display = 'none';
+        document.getElementById('chat-context-text').textContent = '';
+    });
+
+    // --- Chat History Persistence ---
+    function getBookId() {
+        return window.bookId || '';
+    }
+
+    async function loadChatHistory() {
+        const bid = getBookId();
+        if (!bid) return;
+        try {
+            const resp = await fetch(`/api/chat-history/${bid}`);
+            if (!resp.ok) return;
+            chatHistory = await resp.json();
+            // Render existing messages
+            chatHistory.forEach(msg => {
+                appendMessageToUI(msg.role, msg.content);
+            });
+        } catch (e) {
+            console.error('Failed to load chat history:', e);
+        }
+    }
+
+    async function saveChatMessage(role, content) {
+        const bid = getBookId();
+        if (!bid) return;
+        try {
+            await fetch(`/api/chat-history/${bid}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role, content })
+            });
+        } catch (e) {
+            console.error('Failed to save chat message:', e);
+        }
+    }
+
+    async function clearChatHistoryOnServer() {
+        const bid = getBookId();
+        if (!bid) return;
+        try {
+            await fetch(`/api/chat-history/${bid}`, { method: 'DELETE' });
+        } catch (e) {
+            console.error('Failed to clear chat history:', e);
+        }
+    }
+
+    function appendMessageToUI(role, text) {
         const div = document.createElement('div');
         div.className = `message msg-${role}`;
         div.textContent = text;
         chatMessages.appendChild(div);
         chatMessages.scrollTop = chatMessages.scrollHeight;
         return div;
+    }
+    function appendMessage(role, text) {
+        return appendMessageToUI(role, text);
     }
 
     async function sendMessage() {
@@ -334,9 +395,12 @@
         appendMessage('user', finalPrompt);
         chatInput.value = "";
 
-        // Don't clear context immediately? 
-        // Typically user might ask multiple questions about same context.
-        // But usually, selection changes. Let's keep it for now until new selection.
+        // Save user message to history
+        const userContent = contextSnapshot
+            ? `Context:\n"""${contextSnapshot}"""\n\nQuestion: ${finalPrompt}`
+            : finalPrompt;
+        chatHistory.push({ role: 'user', content: finalPrompt });
+        saveChatMessage('user', finalPrompt);
 
         const loadingMsg = appendMessage('ai', 'Thinking...');
         loadingMsg.innerHTML = '<div class="spinner"></div>';
@@ -378,6 +442,10 @@
                 answer = data.choices[0].message.content;
             }
             loadingMsg.textContent = answer;
+
+            // Save AI response to history
+            chatHistory.push({ role: 'ai', content: answer });
+            saveChatMessage('ai', answer);
 
         } catch (err) {
             loadingMsg.textContent = "Error: " + err.message;
@@ -473,6 +541,14 @@
         }
     });
 
+    // Clear Chat button
+    document.getElementById('clear-chat-btn').addEventListener('click', async () => {
+        chatHistory = [];
+        // Keep the system message, remove everything else
+        chatMessages.innerHTML = '<div class="message msg-system">Select text to ask about it, or just type a question.</div>';
+        await clearChatHistoryOnServer();
+    });
+
     // --- Restore persisted sidebar width and collapsed state ---
     (function restoreChatState() {
         const savedWidth = localStorage.getItem('chat_sidebar_width');
@@ -485,4 +561,7 @@
             if (toggleBtn) toggleBtn.textContent = '💬 Show Chat';
         }
     })();
+
+    // Load chat history on page load
+    loadChatHistory();
 </script>

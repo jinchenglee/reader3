@@ -119,7 +119,13 @@
 
         #pdf-content {
             position: relative;
+            display: flex;
+            gap: 10px;
             /* Anchor for absolute children */
+        }
+
+        .page-container {
+            position: relative;
         }
 
         /* The canvas where PDF is drawn */
@@ -215,6 +221,7 @@
             <button class="btn-icon" id="fit-width" title="Fit Width" style="font-size: 0.8em;">↔ Width</button>
             <button class="btn-icon" id="fit-page" title="Fit Page" style="font-size: 0.8em;">↕ Page</button>
             <button class="btn-icon" id="toggle-toc" title="Table of Contents" style="font-size: 0.8em;">📑 ToC</button>
+            <button class="btn-icon" id="toggle-dual" title="Dual Page View" style="font-size: 0.8em;">📖 Dual</button>
         </div>
 
         <div style="display: flex; gap: 10px;">
@@ -234,11 +241,38 @@
         <div id="pdf-wrapper">
             <div id="pdf-scroll-container">
                 <div id="pdf-content">
-                    <canvas id="the-canvas"></canvas>
-                    <div id="text-layer" class="textLayer"></div>
+                    <div class="page-container" id="page-container-1">
+                        <canvas id="the-canvas"></canvas>
+                        <div id="text-layer" class="textLayer"></div>
+                    </div>
+                    <div class="page-container" id="page-container-2" style="display:none;">
+                        <canvas id="the-canvas-2"></canvas>
+                        <div id="text-layer-2" class="textLayer"></div>
+                    </div>
                 </div>
             </div>
         </div>
+
+        <!-- Set bookId before chat component so loadChatHistory can use it -->
+        <!-- Set bookId before chat component so loadChatHistory can use it -->
+        <!-- Data Injection: Prevent formatter errors -->
+        <script type="application/json" id="pdf-data">
+        {
+            "bookId": "{{ book_id }}",
+            "pdfUrl": "{{ pdf_url }}",
+            "initialPage": {{ initial_page }},
+            "initialZoom": {{ initial_zoom }},
+            "initialDualPage": {{ initial_dual_page }}
+        }
+        </script>
+        <script>
+            try {
+                window.pdfData = JSON.parse(document.getElementById('pdf-data').textContent);
+                window.bookId = window.pdfData.bookId;
+            } catch (e) {
+                console.error("Failed to parse PDF data", e);
+            }
+        </script>
 
         <!-- Chat Sidebar Included Here -->
         {% include "components/chat_component.html" %}
@@ -250,19 +284,34 @@
         // PDF.js worker
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-        const url = "{{ pdf_url }}";
-        const bookId = "{{ book_id }}";
+        const config = window.pdfData || {};
+        const url = config.pdfUrl;
+        const bookId = config.bookId;
+        // window.bookId is already set
 
         // Restore State
-        let pageNum = {{ initial_page }};
-        let scale = {{ initial_zoom }};
+        let pageNum = config.initialPage;
+        let scale = config.initialZoom;
+        let dualPageMode = config.initialDualPage;
 
         let pdfDoc = null,
             pageRendering = false,
             pageNumPending = null,
             canvas = document.getElementById('the-canvas'),
             ctx = canvas.getContext('2d'),
-            textLayerDiv = document.getElementById('text-layer');
+            textLayerDiv = document.getElementById('text-layer'),
+            canvas2 = document.getElementById('the-canvas-2'),
+            ctx2 = canvas2.getContext('2d'),
+            textLayerDiv2 = document.getElementById('text-layer-2'),
+            pageContainer2 = document.getElementById('page-container-2');
+
+        // Update dual button text on load
+        function updateDualButtonText() {
+            const btn = document.getElementById('toggle-dual');
+            btn.textContent = dualPageMode ? '📖 Single' : '📖 Dual';
+            btn.title = dualPageMode ? 'Switch to Single Page' : 'Switch to Dual Page';
+        }
+        updateDualButtonText();
 
         // --- Save Progress ---
         let saveTimeout;
@@ -271,7 +320,8 @@
                 chapter_index: 0,
                 page_num: pageNum,
                 scroll_position: 0,
-                zoom: scale
+                zoom: scale,
+                dual_page: dualPageMode
             };
 
             fetch(`/api/progress/${bookId}`, {
@@ -288,66 +338,99 @@
 
         // --- PDF Rendering ---
 
+        function renderSinglePage(pageObj, targetCanvas, targetCtx, targetTextLayer) {
+            const viewport = pageObj.getViewport({ scale: scale });
+            const dpr = window.devicePixelRatio || 1;
+
+            targetCanvas.width = Math.floor(viewport.width * dpr);
+            targetCanvas.height = Math.floor(viewport.height * dpr);
+            targetCanvas.style.width = Math.floor(viewport.width) + 'px';
+            targetCanvas.style.height = Math.floor(viewport.height) + 'px';
+
+            targetTextLayer.style.height = Math.floor(viewport.height) + 'px';
+            targetTextLayer.style.width = Math.floor(viewport.width) + 'px';
+            targetTextLayer.style.setProperty('--scale-factor', scale);
+
+            targetCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            const renderContext = {
+                canvasContext: targetCtx,
+                viewport: viewport
+            };
+            return pageObj.render(renderContext).promise.then(function () {
+                return pageObj.getTextContent();
+            }).then(function (textContent) {
+                targetTextLayer.innerHTML = '';
+                pdfjsLib.renderTextLayer({
+                    textContentSource: textContent,
+                    container: targetTextLayer,
+                    viewport: viewport,
+                    textDivs: []
+                });
+            });
+        }
+
         function renderPage(num) {
             pageRendering = true;
-            // Fetch page
-            pdfDoc.getPage(num).then(function (page) {
-                const viewport = page.getViewport({ scale: scale });
-                const dpr = window.devicePixelRatio || 1;
 
-                // Set canvas resolution for HiDPI (render at higher res)
-                canvas.width = Math.floor(viewport.width * dpr);
-                canvas.height = Math.floor(viewport.height * dpr);
+            if (dualPageMode) {
+                pageContainer2.style.display = 'block';
+                const leftPageNum = num;
+                const rightPageNum = num + 1;
 
-                // Set CSS display size (visual size)
-                canvas.style.width = Math.floor(viewport.width) + 'px';
-                canvas.style.height = Math.floor(viewport.height) + 'px';
+                // Render left page
+                const leftPromise = pdfDoc.getPage(leftPageNum).then(function (page) {
+                    return renderSinglePage(page, canvas, ctx, textLayerDiv);
+                });
 
-                // Align Text Layer dimensions
-                textLayerDiv.style.height = Math.floor(viewport.height) + 'px';
-                textLayerDiv.style.width = Math.floor(viewport.width) + 'px';
-
-                // CSS Variable for text layer scaling (PDF.js standard requirement)
-                textLayerDiv.style.setProperty('--scale-factor', scale);
-
-                // Scale canvas context to match HiDPI
-                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-                // Render PDF page into canvas context
-                const renderContext = {
-                    canvasContext: ctx,
-                    viewport: viewport
-                };
-                const renderTask = page.render(renderContext);
-
-                // Wait for render to finish
-                renderTask.promise.then(function () {
-                    pageRendering = false;
-
-                    // Render Text Layer
-                    return page.getTextContent();
-                }).then(function (textContent) {
-                    textLayerDiv.innerHTML = ""; // Clear old
-
-                    pdfjsLib.renderTextLayer({
-                        textContentSource: textContent,
-                        container: textLayerDiv,
-                        viewport: viewport,
-                        textDivs: []
+                // Render right page if it exists
+                let rightPromise;
+                if (rightPageNum <= pdfDoc.numPages) {
+                    rightPromise = pdfDoc.getPage(rightPageNum).then(function (page) {
+                        return renderSinglePage(page, canvas2, ctx2, textLayerDiv2);
                     });
+                } else {
+                    // No right page — clear canvas 2
+                    rightPromise = Promise.resolve();
+                    canvas2.width = 0;
+                    canvas2.height = 0;
+                    canvas2.style.width = '0px';
+                    canvas2.style.height = '0px';
+                    textLayerDiv2.innerHTML = '';
+                }
 
+                Promise.all([leftPromise, rightPromise]).then(function () {
+                    pageRendering = false;
                     if (pageNumPending !== null) {
                         renderPage(pageNumPending);
                         pageNumPending = null;
                     }
                 });
-            });
 
-            // Update page counters and input
-            // document.getElementById('page-num').textContent = num; // Old span
-            document.getElementById('page-num-input').value = num;
+                // Update page display
+                if (rightPageNum <= pdfDoc.numPages) {
+                    document.getElementById('page-num-input').value = leftPageNum + '-' + rightPageNum;
+                } else {
+                    document.getElementById('page-num-input').value = leftPageNum;
+                }
+            } else {
+                // Single page mode
+                pageContainer2.style.display = 'none';
 
-            debounceSave(); // Save state on page render (navigation)
+                pdfDoc.getPage(num).then(function (page) {
+                    return renderSinglePage(page, canvas, ctx, textLayerDiv);
+                }).then(function () {
+                    pageRendering = false;
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+
+                document.getElementById('page-num-input').value = num;
+            }
+
+            debounceSave();
         }
 
         function queueRenderPage(num) {
@@ -359,13 +442,15 @@
         }
 
         function onPrevPage() {
+            const step = dualPageMode ? 2 : 1;
             if (pageNum <= 1) return;
-            pageNum--;
+            pageNum = Math.max(1, pageNum - step);
             queueRenderPage(pageNum);
         }
         function onNextPage() {
+            const step = dualPageMode ? 2 : 1;
             if (pageNum >= pdfDoc.numPages) return;
-            pageNum++;
+            pageNum = Math.min(pdfDoc.numPages, pageNum + step);
             queueRenderPage(pageNum);
         }
         function onZoomIn() { scale += 0.2; renderPage(pageNum); }
@@ -376,7 +461,12 @@
                 const baseViewport = page.getViewport({ scale: 1.0 });
                 const container = document.getElementById('pdf-scroll-container');
                 const availableWidth = container.clientWidth - 40; // subtract padding
-                scale = availableWidth / baseViewport.width;
+                if (dualPageMode) {
+                    // Two pages side-by-side plus gap
+                    scale = (availableWidth - 10) / (baseViewport.width * 2);
+                } else {
+                    scale = availableWidth / baseViewport.width;
+                }
                 renderPage(pageNum);
             });
         }
@@ -387,11 +477,27 @@
                 const container = document.getElementById('pdf-scroll-container');
                 const availableWidth = container.clientWidth - 40;
                 const availableHeight = container.clientHeight - 40;
-                const scaleW = availableWidth / baseViewport.width;
-                const scaleH = availableHeight / baseViewport.height;
+                let scaleW, scaleH;
+                if (dualPageMode) {
+                    scaleW = (availableWidth - 10) / (baseViewport.width * 2);
+                } else {
+                    scaleW = availableWidth / baseViewport.width;
+                }
+                scaleH = availableHeight / baseViewport.height;
                 scale = Math.min(scaleW, scaleH);
                 renderPage(pageNum);
             });
+        }
+
+        function onToggleDual() {
+            dualPageMode = !dualPageMode;
+            updateDualButtonText();
+            // Ensure pageNum is odd in dual mode for proper spread alignment
+            if (dualPageMode && pageNum % 2 === 0 && pageNum > 1) {
+                pageNum = pageNum - 1;
+            }
+            renderPage(pageNum);
+            debounceSave();
         }
 
         function onToggleToc() {
@@ -424,10 +530,18 @@
                 div.addEventListener('click', function () {
                     // Navigate to the destination
                     if (item.dest) {
-                        pdfDoc.getDestination(item.dest).then(function (dest) {
+                        // dest can be a string (named destination) or an array (explicit destination)
+                        const destPromise = typeof item.dest === 'string'
+                            ? pdfDoc.getDestination(item.dest)
+                            : Promise.resolve(item.dest);
+                        destPromise.then(function (dest) {
                             if (dest) {
                                 pdfDoc.getPageIndex(dest[0]).then(function (pageIndex) {
                                     pageNum = pageIndex + 1;
+                                    // In dual mode, snap to odd page
+                                    if (dualPageMode && pageNum % 2 === 0 && pageNum > 1) {
+                                        pageNum = pageNum - 1;
+                                    }
                                     queueRenderPage(pageNum);
                                 });
                             }
@@ -450,14 +564,20 @@
         document.getElementById('fit-width').addEventListener('click', () => { onFitWidth(); debounceSave(); });
         document.getElementById('fit-page').addEventListener('click', () => { onFitPage(); debounceSave(); });
         document.getElementById('toggle-toc').addEventListener('click', onToggleToc);
+        document.getElementById('toggle-dual').addEventListener('click', onToggleDual);
 
         // Go to Page Input
         const pageInput = document.getElementById('page-num-input');
         pageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
-                const val = parseInt(pageInput.value);
+                // Handle both single page "5" and dual range "5-6" inputs
+                const rawVal = pageInput.value.split('-')[0].trim();
+                const val = parseInt(rawVal);
                 if (val && val >= 1 && val <= pdfDoc.numPages) {
                     pageNum = val;
+                    if (dualPageMode && pageNum % 2 === 0 && pageNum > 1) {
+                        pageNum = pageNum - 1;
+                    }
                     queueRenderPage(pageNum);
                 } else {
                     // Reset to current
@@ -470,6 +590,10 @@
         pdfjsLib.getDocument(url).promise.then(function (pdfDoc_) {
             pdfDoc = pdfDoc_;
             document.getElementById('page-count').textContent = pdfDoc.numPages;
+            // In dual mode, snap to odd page on initial load
+            if (dualPageMode && pageNum % 2 === 0 && pageNum > 1) {
+                pageNum = pageNum - 1;
+            }
             renderPage(pageNum);
         });
 

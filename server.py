@@ -14,6 +14,7 @@ import sys
 
 from reader3 import Book, BookMetadata, ChapterContent, TOCEntry
 import json
+from typing import List
 from pydantic import BaseModel
 
 class ProgressUpdate(BaseModel):
@@ -21,6 +22,11 @@ class ProgressUpdate(BaseModel):
     page_num: int = 1  # For PDFs
     scroll_position: float = 0.0
     zoom: float = 100.0
+    dual_page: bool = False
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
 
 app = FastAPI()
 app.mount("/books", StaticFiles(directory="books"), name="books")
@@ -47,37 +53,98 @@ def load_book_cached(folder_name: str) -> Optional[Book]:
         print(f"Error loading book {folder_name}: {e}")
         return None
 
-PROGRESS_FILE = "reading_progress.json"
+OLD_PROGRESS_FILE = "reading_progress.json"
+
+# --- Per-book storage helpers ---
+
+def _book_dir(book_id: str) -> str:
+    return os.path.join(BOOKS_DIR, book_id)
 
 def load_progress(book_id: str) -> dict:
-    if not os.path.exists(PROGRESS_FILE):
+    path = os.path.join(_book_dir(book_id), "progress.json")
+    if not os.path.exists(path):
         return {}
     try:
-        with open(PROGRESS_FILE, "r") as f:
-            data = json.load(f)
-            return data.get(book_id, {})
+        with open(path, "r") as f:
+            return json.load(f)
     except Exception as e:
-        print(f"Error loading progress: {e}")
+        print(f"Error loading progress for {book_id}: {e}")
         return {}
 
 def save_progress_helper(book_id: str, data: dict):
-    all_data = {}
-    if os.path.exists(PROGRESS_FILE):
-        try:
-            with open(PROGRESS_FILE, "r") as f:
-                all_data = json.load(f)
-        except Exception:
-            all_data = {}
-    
-    all_data[book_id] = data
-    
-    with open(PROGRESS_FILE, "w") as f:
-        json.dump(all_data, f, indent=2)
+    d = _book_dir(book_id)
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "progress.json")
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+def load_chat_history(book_id: str) -> list:
+    path = os.path.join(_book_dir(book_id), "chat_history.json")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading chat history for {book_id}: {e}")
+        return []
+
+def save_chat_history(book_id: str, messages: list):
+    d = _book_dir(book_id)
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "chat_history.json")
+    with open(path, "w") as f:
+        json.dump(messages, f, indent=2)
+
+def delete_chat_history(book_id: str):
+    path = os.path.join(_book_dir(book_id), "chat_history.json")
+    if os.path.exists(path):
+        os.remove(path)
+
+def migrate_global_progress():
+    """One-time migration: split global reading_progress.json into per-book files."""
+    if not os.path.exists(OLD_PROGRESS_FILE):
+        return
+    try:
+        with open(OLD_PROGRESS_FILE, "r") as f:
+            all_data = json.load(f)
+        for book_id, data in all_data.items():
+            # Only migrate if per-book file doesn't already exist
+            per_book_path = os.path.join(_book_dir(book_id), "progress.json")
+            if not os.path.exists(per_book_path):
+                save_progress_helper(book_id, data)
+                print(f"  Migrated progress for: {book_id}")
+        # Rename old file to .bak
+        os.rename(OLD_PROGRESS_FILE, OLD_PROGRESS_FILE + ".bak")
+        print(f"Migration complete. Old file renamed to {OLD_PROGRESS_FILE}.bak")
+    except Exception as e:
+        print(f"Error during progress migration: {e}")
+
+# Run migration on module load
+print("Checking for progress migration...")
+migrate_global_progress()
 
 @app.post("/api/progress/{book_id}")
 async def save_progress(book_id: str, update: ProgressUpdate):
-    data = update.dict()
+    data = update.model_dump()
     save_progress_helper(book_id, data)
+    return {"status": "ok"}
+
+@app.get("/api/chat-history/{book_id}")
+async def get_chat_history(book_id: str):
+    messages = load_chat_history(book_id)
+    return JSONResponse(messages)
+
+@app.post("/api/chat-history/{book_id}")
+async def append_chat_message(book_id: str, message: ChatMessage):
+    messages = load_chat_history(book_id)
+    messages.append(message.model_dump())
+    save_chat_history(book_id, messages)
+    return {"status": "ok"}
+
+@app.delete("/api/chat-history/{book_id}")
+async def clear_chat_history(book_id: str):
+    delete_chat_history(book_id)
     return {"status": "ok"}
 
 @app.get("/", response_class=HTMLResponse)
@@ -115,7 +182,8 @@ async def redirect_to_first_chapter(request: Request, book_id: str):
     
     if book.source_file.endswith('.pdf'):
          initial_page = progress.get("page_num", 1)
-         initial_zoom = progress.get("zoom", 1.0) # Saved as float 1.0 = 100%? Or 100? Let's check frontend. Frontend uses 100.
+         initial_zoom = progress.get("zoom", 1.0)
+         initial_dual_page = "true" if progress.get("dual_page", False) else "false"
          
          return templates.TemplateResponse("pdf_reader.html", {
             "request": request,
@@ -123,7 +191,8 @@ async def redirect_to_first_chapter(request: Request, book_id: str):
             "book_id": book_id,
             "pdf_url": f"/books/{book_id}/original.pdf",
             "initial_page": initial_page,
-            "initial_zoom": initial_zoom
+            "initial_zoom": initial_zoom,
+            "initial_dual_page": initial_dual_page
         })
         
     # For EPUB, redirect to last read chapter if available
@@ -262,6 +331,8 @@ async def chat_proxy(payload: dict = Body(...)):
                 # Let's assume user provides full URL for maximum flexibility
                 if not base_url: 
                      raise HTTPException(status_code=400, detail="Custom provider requires baseUrl")
+                else:
+                    url = "http://localhost:1234/api/chat/completions"
                 
                 heading = {}
                 if api_key:
