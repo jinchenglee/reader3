@@ -201,7 +201,12 @@
         <!-- Toolbar -->
         <div class="header-controls">
             <button class="btn-icon" id="prev-page" title="Previous Page">◀</button>
-            <span class="page-info">Page <span id="page-num">--</span> / <span id="page-count">--</span></span>
+            <span class="page-info">
+                Page
+                <input type="number" id="page-num-input" value="--"
+                    style="width: 50px; text-align: center; background: #34495e; color: white; border: 1px solid #555; border-radius: 4px; padding: 2px;">
+                / <span id="page-count">--</span>
+            </span>
             <button class="btn-icon" id="next-page" title="Next Page">▶</button>
             <span style="border-left: 1px solid #555; height: 20px; margin: 0 5px;"></span>
             <button class="btn-icon" id="zoom-out" title="Zoom Out">−</button>
@@ -246,14 +251,40 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
         const url = "{{ pdf_url }}";
+        const bookId = "{{ book_id }}";
+
+        // Restore State
+        let pageNum = {{ initial_page }};
+        let scale = {{ initial_zoom }};
+
         let pdfDoc = null,
-            pageNum = 1,
             pageRendering = false,
             pageNumPending = null,
-            scale = 1.0,
             canvas = document.getElementById('the-canvas'),
             ctx = canvas.getContext('2d'),
             textLayerDiv = document.getElementById('text-layer');
+
+        // --- Save Progress ---
+        let saveTimeout;
+        function saveProgress() {
+            const data = {
+                chapter_index: 0,
+                page_num: pageNum,
+                scroll_position: 0,
+                zoom: scale
+            };
+
+            fetch(`/api/progress/${bookId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).catch(console.error);
+        }
+
+        function debounceSave() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveProgress, 1000);
+        }
 
         // --- PDF Rendering ---
 
@@ -312,8 +343,11 @@
                 });
             });
 
-            // Update page counters
-            document.getElementById('page-num').textContent = num;
+            // Update page counters and input
+            // document.getElementById('page-num').textContent = num; // Old span
+            document.getElementById('page-num-input').value = num;
+
+            debounceSave(); // Save state on page render (navigation)
         }
 
         function queueRenderPage(num) {
@@ -411,11 +445,26 @@
 
         document.getElementById('prev-page').addEventListener('click', onPrevPage);
         document.getElementById('next-page').addEventListener('click', onNextPage);
-        document.getElementById('zoom-in').addEventListener('click', onZoomIn);
-        document.getElementById('zoom-out').addEventListener('click', onZoomOut);
-        document.getElementById('fit-width').addEventListener('click', onFitWidth);
-        document.getElementById('fit-page').addEventListener('click', onFitPage);
+        document.getElementById('zoom-in').addEventListener('click', () => { onZoomIn(); debounceSave(); });
+        document.getElementById('zoom-out').addEventListener('click', () => { onZoomOut(); debounceSave(); });
+        document.getElementById('fit-width').addEventListener('click', () => { onFitWidth(); debounceSave(); });
+        document.getElementById('fit-page').addEventListener('click', () => { onFitPage(); debounceSave(); });
         document.getElementById('toggle-toc').addEventListener('click', onToggleToc);
+
+        // Go to Page Input
+        const pageInput = document.getElementById('page-num-input');
+        pageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const val = parseInt(pageInput.value);
+                if (val && val >= 1 && val <= pdfDoc.numPages) {
+                    pageNum = val;
+                    queueRenderPage(pageNum);
+                } else {
+                    // Reset to current
+                    pageInput.value = pageNum;
+                }
+            }
+        });
 
         // Load Document
         pdfjsLib.getDocument(url).promise.then(function (pdfDoc_) {

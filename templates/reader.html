@@ -255,6 +255,7 @@
             border: 1px solid #3498db;
             border-radius: 4px;
             transition: all 0.2s;
+            cursor: pointer;
         }
 
         .nav-btn:hover {
@@ -283,15 +284,27 @@
         <div class="header-controls">
             <!-- Navigation -->
             {% if prev_idx is not none %}
-            <a href="/read/{{ book_id }}/{{ prev_idx }}" class="btn-icon" title="Previous Chapter">◀</a>
+            <span class="btn-icon nav-prev" onclick="loadChapter({{ prev_idx }})" title="Previous Chapter"
+                style="cursor:pointer;">◀</span>
             {% else %}
-            <span class="btn-icon" style="opacity:0.3; cursor:default;">◀</span>
+            <span class="btn-icon nav-prev" style="opacity:0.3; cursor:default; pointer-events:none;">◀</span>
             {% endif %}
-            <span class="section-info">Section {{ chapter_index + 1 }} / {{ book.spine|length }}</span>
+
+            <span class="section-info">
+                Section
+                <input type="number" id="goto-section-input" value="{{ chapter_index + 1 }}" min="1"
+                    max="{{ book.spine|length }}"
+                    style="width: 50px; text-align: center; background: #34495e; color: white; border: 1px solid #555; border-radius: 4px; padding: 2px;">
+                / {{ book.spine|length }}
+                <button id="goto-btn" class="btn-icon" style="font-size: 0.8em; padding: 2px 5px;"
+                    title="Go">Go</button>
+            </span>
+
             {% if next_idx is not none %}
-            <a href="/read/{{ book_id }}/{{ next_idx }}" class="btn-icon" title="Next Chapter">▶</a>
+            <span class="btn-icon nav-next" onclick="loadChapter({{ next_idx }})" title="Next Chapter"
+                style="cursor:pointer;">▶</span>
             {% else %}
-            <span class="btn-icon" style="opacity:0.3; cursor:default;">▶</span>
+            <span class="btn-icon nav-next" style="opacity:0.3; cursor:default; pointer-events:none;">▶</span>
             {% endif %}
 
             <span class="header-sep"></span>
@@ -359,9 +372,9 @@
 
                 <div class="chapter-nav" style="max-width: 800px; margin: 0 auto; padding: 20px 50px 40px;">
                     {% if prev_idx is not none %}
-                    <a href="/read/{{ book_id }}/{{ prev_idx }}" class="nav-btn">← Previous</a>
+                    <span class="nav-btn nav-prev-bottom" onclick="loadChapter({{ prev_idx }})">← Previous</span>
                     {% else %}
-                    <span class="nav-btn disabled">← Previous</span>
+                    <span class="nav-btn nav-prev-bottom disabled">← Previous</span>
                     {% endif %}
 
                     <span style="color: #999; padding: 10px;">
@@ -369,9 +382,9 @@
                     </span>
 
                     {% if next_idx is not none %}
-                    <a href="/read/{{ book_id }}/{{ next_idx }}" class="nav-btn">Next →</a>
+                    <span class="nav-btn nav-next-bottom" onclick="loadChapter({{ next_idx }})">Next →</span>
                     {% else %}
-                    <span class="nav-btn disabled">Next →</span>
+                    <span class="nav-btn nav-next-bottom disabled">Next →</span>
                     {% endif %}
                 </div>
             </div>
@@ -383,19 +396,58 @@
     </div>
 
     <script>
-        // --- Zoom State ---
-        let currentZoom = 100; // percentage
+        // --- State & Persistence ---
+        const bookId = "{{ book_id }}";
+        let chapterIndex = {{ chapter_index }};
+        let currentZoom = {{ initial_zoom }}; // Restore zoom
+        const totalChapters = {{ book.spine|length }};
+
         const zoomStep = 10;
         const minZoom = 50;
         const maxZoom = 200;
         const bookContentDiv = document.getElementById('book-content-div');
         const contentScroll = document.getElementById('content-scroll');
 
+        // Restore Scroll Position
+        window.addEventListener('load', () => {
+            const initScroll = {{ initial_scroll }};
+            if (initScroll > 0) {
+                contentScroll.scrollTop = initScroll;
+            }
+            applyZoom(); // Apply initial zoom
+        });
+
+        // Save Progress
+        let saveTimeout;
+        function saveProgress() {
+            const data = {
+                chapter_index: chapterIndex,
+                page_num: 1, // Not used for EPUB but consistent
+                scroll_position: contentScroll.scrollTop,
+                zoom: currentZoom
+            };
+
+            fetch(`/api/progress/${bookId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).catch(console.error);
+        }
+
+        function debounceSave() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveProgress, 1000);
+        }
+
+        // Event Listeners for Saving
+        contentScroll.addEventListener('scroll', debounceSave);
+
         function applyZoom() {
             const scaleFactor = currentZoom / 100;
             bookContentDiv.style.transform = `scale(${scaleFactor})`;
             // Adjust wrapper for layout
             bookContentDiv.style.transformOrigin = 'top center';
+            debounceSave(); // Save zoom change
         }
 
         document.getElementById('zoom-in').addEventListener('click', function () {
@@ -478,6 +530,175 @@
         {% endfor %}
         };
 
+        // ==============================================
+        // AJAX Chapter Loading (no full page reload)
+        // ==============================================
+        async function loadChapter(idx, anchor) {
+            if (idx < 0 || idx >= totalChapters) return;
+
+            try {
+                const resp = await fetch(`/api/chapter/${bookId}/${idx}`);
+                if (!resp.ok) {
+                    console.error("Failed to load chapter", idx, resp.status);
+                    return;
+                }
+                const data = await resp.json();
+
+                // 1. Swap content
+                bookContentDiv.innerHTML = data.content;
+
+                // 2. Update JS state
+                chapterIndex = data.chapter_index;
+
+                // 3. Update URL bar (without reload)
+                const newUrl = `/read/${bookId}/${chapterIndex}` + (anchor ? '#' + anchor : '');
+                history.pushState({ chapterIndex: chapterIndex }, '', newUrl);
+
+                // 4. Update navigation UI
+                updateNavUI(data.prev_idx, data.next_idx);
+
+                // 5. Update ToC active highlight
+                updateTocHighlight(data.href);
+
+                // 6. Scroll to anchor or top
+                if (anchor) {
+                    const target = document.getElementById(anchor);
+                    if (target) {
+                        target.scrollIntoView();
+                    } else {
+                        contentScroll.scrollTop = 0;
+                    }
+                } else {
+                    contentScroll.scrollTop = 0;
+                }
+
+                // 7. Re-apply zoom (already set, just ensure transform is correct)
+                applyZoom();
+
+                // 8. Save progress immediately
+                saveProgress();
+
+            } catch (err) {
+                console.error("Error loading chapter:", err);
+            }
+        }
+
+        function updateNavUI(prevIdx, nextIdx) {
+            // Update section counter
+            const gotoInput = document.getElementById('goto-section-input');
+            gotoInput.value = chapterIndex + 1;
+
+            // Update section info text in bottom nav
+            const bottomInfo = document.querySelector('.chapter-nav span[style]');
+            if (bottomInfo) {
+                bottomInfo.textContent = `Section ${chapterIndex + 1} of ${totalChapters}`;
+            }
+
+            // Update header prev/next buttons
+            const headerControls = document.querySelector('.header-controls');
+            const prevBtn = headerControls.querySelector('.nav-prev');
+            const nextBtn = headerControls.querySelector('.nav-next');
+
+            if (prevBtn) {
+                if (prevIdx !== null && prevIdx !== undefined) {
+                    prevBtn.style.opacity = '';
+                    prevBtn.style.cursor = 'pointer';
+                    prevBtn.style.pointerEvents = '';
+                    prevBtn.onclick = (e) => { e.preventDefault(); loadChapter(prevIdx); };
+                } else {
+                    prevBtn.style.opacity = '0.3';
+                    prevBtn.style.cursor = 'default';
+                    prevBtn.style.pointerEvents = 'none';
+                    prevBtn.onclick = null;
+                }
+            }
+
+            if (nextBtn) {
+                if (nextIdx !== null && nextIdx !== undefined) {
+                    nextBtn.style.opacity = '';
+                    nextBtn.style.cursor = '';
+                    nextBtn.style.pointerEvents = '';
+                    nextBtn.onclick = (e) => { e.preventDefault(); loadChapter(nextIdx); };
+                } else {
+                    nextBtn.style.opacity = '0.3';
+                    nextBtn.style.cursor = 'default';
+                    nextBtn.style.pointerEvents = 'none';
+                    nextBtn.onclick = null;
+                }
+            }
+
+            // Update bottom prev/next buttons
+            const bottomNav = document.querySelector('.chapter-nav');
+            if (bottomNav) {
+                const bottomPrev = bottomNav.querySelector('.nav-prev-bottom');
+                const bottomNext = bottomNav.querySelector('.nav-next-bottom');
+
+                if (bottomPrev) {
+                    if (prevIdx !== null && prevIdx !== undefined) {
+                        bottomPrev.className = 'nav-btn nav-prev-bottom';
+                        bottomPrev.onclick = (e) => { e.preventDefault(); loadChapter(prevIdx); };
+                    } else {
+                        bottomPrev.className = 'nav-btn nav-prev-bottom disabled';
+                        bottomPrev.onclick = null;
+                    }
+                }
+
+                if (bottomNext) {
+                    if (nextIdx !== null && nextIdx !== undefined) {
+                        bottomNext.className = 'nav-btn nav-next-bottom';
+                        bottomNext.onclick = (e) => { e.preventDefault(); loadChapter(nextIdx); };
+                    } else {
+                        bottomNext.className = 'nav-btn nav-next-bottom disabled';
+                        bottomNext.onclick = null;
+                    }
+                }
+            }
+        }
+
+        function updateTocHighlight(currentHref) {
+            // Remove all active classes
+            document.querySelectorAll('a.toc-link.active').forEach(el => {
+                el.classList.remove('active');
+            });
+            // Find and activate matching link
+            document.querySelectorAll('a.toc-link').forEach(el => {
+                const onclick = el.getAttribute('onclick');
+                if (onclick && onclick.includes(currentHref)) {
+                    el.classList.add('active');
+                }
+            });
+        }
+
+        // --- Browser back/forward support ---
+        window.addEventListener('popstate', function (e) {
+            if (e.state && e.state.chapterIndex !== undefined) {
+                // Use loadChapterNoHistory to avoid pushing duplicate state
+                loadChapterNoHistory(e.state.chapterIndex);
+            }
+        });
+
+        async function loadChapterNoHistory(idx) {
+            if (idx < 0 || idx >= totalChapters) return;
+            try {
+                const resp = await fetch(`/api/chapter/${bookId}/${idx}`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+
+                bookContentDiv.innerHTML = data.content;
+                chapterIndex = data.chapter_index;
+                updateNavUI(data.prev_idx, data.next_idx);
+                updateTocHighlight(data.href);
+                contentScroll.scrollTop = 0;
+                applyZoom();
+                saveProgress();
+            } catch (err) {
+                console.error("Error loading chapter:", err);
+            }
+        }
+
+        // Set initial history state
+        history.replaceState({ chapterIndex: chapterIndex }, '');
+
         function findAndGo(filename) {
             // cleanup anchor
             let cleanFile = filename.split('#')[0];
@@ -500,11 +721,7 @@
             if (idx !== undefined) {
                 // Extract anchor from original filename
                 const anchor = filename.includes('#') ? filename.split('#')[1] : '';
-                let url = "/read/{{ book_id }}/" + idx;
-                if (anchor) {
-                    url += '#' + anchor;
-                }
-                window.location.href = url;
+                loadChapter(idx, anchor);
             } else {
                 console.error("Could not find index for", filename);
                 // Don't alert for same-page anchors
@@ -517,9 +734,13 @@
         }
 
         // --- Intercept internal content links ---
-        document.getElementById('book-content-div').addEventListener('click', function (e) {
+        // Use event delegation on content-scroll so it works after content swap
+        document.getElementById('content-scroll').addEventListener('click', function (e) {
             const link = e.target.closest('a');
             if (!link) return;
+
+            // Only intercept links inside book content, not nav buttons
+            if (!document.getElementById('book-content-div').contains(link)) return;
 
             const href = link.getAttribute('href');
             if (!href) return;
@@ -545,6 +766,24 @@
                     }
                 }
             }
+        });
+
+        // --- Go To Section Logic ---
+        const gotoInput = document.getElementById('goto-section-input');
+        const gotoBtn = document.getElementById('goto-btn');
+
+        function handleGoTo() {
+            const val = parseInt(gotoInput.value);
+            if (val && val >= 1 && val <= totalChapters) {
+                loadChapter(val - 1);
+            } else {
+                alert("Invalid section number");
+            }
+        }
+
+        gotoBtn.addEventListener('click', handleGoTo);
+        gotoInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleGoTo();
         });
 
     </script>

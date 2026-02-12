@@ -13,6 +13,14 @@ import signal
 import sys
 
 from reader3 import Book, BookMetadata, ChapterContent, TOCEntry
+import json
+from pydantic import BaseModel
+
+class ProgressUpdate(BaseModel):
+    chapter_index: int
+    page_num: int = 1  # For PDFs
+    scroll_position: float = 0.0
+    zoom: float = 100.0
 
 app = FastAPI()
 app.mount("/books", StaticFiles(directory="books"), name="books")
@@ -38,6 +46,39 @@ def load_book_cached(folder_name: str) -> Optional[Book]:
     except Exception as e:
         print(f"Error loading book {folder_name}: {e}")
         return None
+
+PROGRESS_FILE = "reading_progress.json"
+
+def load_progress(book_id: str) -> dict:
+    if not os.path.exists(PROGRESS_FILE):
+        return {}
+    try:
+        with open(PROGRESS_FILE, "r") as f:
+            data = json.load(f)
+            return data.get(book_id, {})
+    except Exception as e:
+        print(f"Error loading progress: {e}")
+        return {}
+
+def save_progress_helper(book_id: str, data: dict):
+    all_data = {}
+    if os.path.exists(PROGRESS_FILE):
+        try:
+            with open(PROGRESS_FILE, "r") as f:
+                all_data = json.load(f)
+        except Exception:
+            all_data = {}
+    
+    all_data[book_id] = data
+    
+    with open(PROGRESS_FILE, "w") as f:
+        json.dump(all_data, f, indent=2)
+
+@app.post("/api/progress/{book_id}")
+async def save_progress(book_id: str, update: ProgressUpdate):
+    data = update.dict()
+    save_progress_helper(book_id, data)
+    return {"status": "ok"}
 
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
@@ -70,15 +111,28 @@ async def redirect_to_first_chapter(request: Request, book_id: str):
         
     # Check if it is a PDF
     # We stored "original.pdf" as source_file for PDFs
+    progress = load_progress(book_id)
+    
     if book.source_file.endswith('.pdf'):
+         initial_page = progress.get("page_num", 1)
+         initial_zoom = progress.get("zoom", 1.0) # Saved as float 1.0 = 100%? Or 100? Let's check frontend. Frontend uses 100.
+         
          return templates.TemplateResponse("pdf_reader.html", {
             "request": request,
             "book": book,
             "book_id": book_id,
-            "pdf_url": f"/books/{book_id}/original.pdf"
+            "pdf_url": f"/books/{book_id}/original.pdf",
+            "initial_page": initial_page,
+            "initial_zoom": initial_zoom
         })
         
-    return await read_chapter(request, book_id=book_id, chapter_index=0)
+    # For EPUB, redirect to last read chapter if available
+    chapter_idx = progress.get("chapter_index", 0)
+    # Ensure valid index
+    if chapter_idx < 0 or chapter_idx >= len(book.spine):
+        chapter_idx = 0
+        
+    return await read_chapter(request, book_id=book_id, chapter_index=chapter_idx)
 
 @app.get("/read/{book_id}/{chapter_index}", response_class=HTMLResponse)
 async def read_chapter(request: Request, book_id: str, chapter_index: int):
@@ -96,6 +150,16 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
     prev_idx = chapter_index - 1 if chapter_index > 0 else None
     next_idx = chapter_index + 1 if chapter_index < len(book.spine) - 1 else None
 
+    # Load progress to restore scroll/zoom if applicable
+    progress = load_progress(book_id)
+    initial_scroll = 0
+    # Always restore zoom — it's a per-book preference
+    initial_zoom = progress.get("zoom", 100)
+    
+    # Only restore scroll position for the same chapter
+    if progress.get("chapter_index") == chapter_index:
+        initial_scroll = progress.get("scroll_position", 0)
+
     return templates.TemplateResponse("reader.html", {
         "request": request,
         "book": book,
@@ -103,7 +167,32 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
         "chapter_index": chapter_index,
         "book_id": book_id,
         "prev_idx": prev_idx,
-        "next_idx": next_idx
+        "next_idx": next_idx,
+        "initial_scroll": initial_scroll,
+        "initial_zoom": initial_zoom
+    })
+
+@app.get("/api/chapter/{book_id}/{chapter_index}")
+async def get_chapter_content(book_id: str, chapter_index: int):
+    """Returns chapter HTML + navigation metadata as JSON for AJAX navigation."""
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    if chapter_index < 0 or chapter_index >= len(book.spine):
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    current_chapter = book.spine[chapter_index]
+    prev_idx = chapter_index - 1 if chapter_index > 0 else None
+    next_idx = chapter_index + 1 if chapter_index < len(book.spine) - 1 else None
+
+    return JSONResponse({
+        "content": current_chapter.content,
+        "chapter_index": chapter_index,
+        "href": current_chapter.href,
+        "prev_idx": prev_idx,
+        "next_idx": next_idx,
+        "total_chapters": len(book.spine)
     })
 
 @app.get("/read/{book_id}/images/{image_name}")
