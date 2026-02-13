@@ -56,6 +56,25 @@ def test_read_pdf_page_loads(client, create_test_pdf):
     assert "pdfUrl" in data
     assert data["pdfUrl"].endswith(".pdf")
 
+def test_pdf_navigation_script_present(client, create_test_pdf):
+    """
+    Verify that the frontend JavaScript for scoped arrow key navigation 
+    is present in the rendered HTML. 
+    Since this is a backend test, we can't execute JS, but we can ensure 
+    the template code is being served correctly.
+    """
+    book_id = create_test_pdf("nav_test_pdf")
+    response = client.get(f"/read/{book_id}")
+    assert response.status_code == 200
+    
+    # Check for the scoped keydown listener on the wrapper
+    assert "pdfWrapper.addEventListener('keydown'" in response.text
+    assert "ArrowLeft" in response.text
+    assert "ArrowRight" in response.text
+    # Verify tabindex is set for focus
+    assert "pdfWrapper.setAttribute('tabindex', '0')" in response.text
+
+
 def test_chat_history_api(client, temp_books_dir):
     """Verify chat history CRUD operations."""
     # We don't strictly need a book to exist for chat history API as it's just file I/O 

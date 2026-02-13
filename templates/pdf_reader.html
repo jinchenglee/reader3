@@ -597,6 +597,33 @@
             renderPage(pageNum);
         });
 
+        // --- Keyboard Navigation ---
+        // --- Keyboard Navigation ---
+        const pdfWrapper = document.getElementById('pdf-wrapper');
+        // Make wrapper focusable
+        pdfWrapper.setAttribute('tabindex', '0');
+        // Focus on load so keys work immediately
+        pdfWrapper.focus();
+
+        // Re-focus wrapper when clicking on canvas/text layer
+        document.getElementById('pdf-content').addEventListener('click', () => {
+            pdfWrapper.focus();
+        });
+
+        pdfWrapper.addEventListener('keydown', (e) => {
+            // Ignore if focus is somehow on an input (though event is scoped to wrapper, 
+            // bubbles from children could trigger this if we had inputs inside, which we don't currently)
+
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault(); // Prevent horizontal scrolling if any
+                onPrevPage();
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                onNextPage();
+            }
+            // Up/Down arrows will bubble/default to scrolling the container naturally
+        });
+
         // --- Text Selection & Context - Override/Hook ---
 
         document.addEventListener('selectionchange', () => {

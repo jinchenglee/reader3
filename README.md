@@ -2,7 +2,7 @@
 
 ![reader3](reader3.png)
 
-A lightweight, self-hosted EPUB reader that lets you read through EPUB books one chapter at a time. This makes it very easy to copy paste the contents of a chapter to an LLM, to read along. Basically - get epub books (e.g. [Project Gutenberg](https://www.gutenberg.org/) has many), open them up in this reader, copy paste text around to your favorite LLM, and read together and along.
+A lightweight, self-hosted EPUB/PDF reader that lets you read through EPUB/PDF books one chapter at a time. This makes it very easy to copy paste the contents of a chapter to an LLM, to read along. Basically - get epub/pdf books (e.g. [Project Gutenberg](https://www.gutenberg.org/) has many), open them up in this reader, copy paste text around to your favorite LLM, and read together and along.
 
 This project was 90% vibe coded just to illustrate how one can very easily [read books together with LLMs](https://x.com/karpathy/status/1990577951671509438) by Mr. Karpathy. 
 
@@ -38,6 +38,12 @@ We can then run the server:
 
 ```bash
 uv run server.py
+```
+
+To stop the server:
+
+```bash
+uv run stop_server.py
 ```
 
 And visit [localhost:8123](http://localhost:8123/) to see your current Library. You can easily add more books, or delete them from your library by deleting their folder under `books/`. It's not supposed to be complicated or complex.
