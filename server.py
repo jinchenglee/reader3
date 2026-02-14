@@ -310,7 +310,7 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
     if progress.get("chapter_index") == chapter_index:
         initial_scroll = progress.get("scroll_position", 0)
 
-    return templates.TemplateResponse("reader.html", {
+    return templates.TemplateResponse("epub_reader.html", {
         "request": request,
         "book": book,
         "current_chapter": current_chapter,
