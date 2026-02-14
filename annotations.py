@@ -2,7 +2,7 @@ import os
 import json
 import uuid
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Any
 from pydantic import BaseModel, Field
 
 # --- Data Models ---
@@ -14,7 +14,19 @@ class AnnotationTarget(BaseModel):
     quote: Optional[str] = None
     # For PDF:
     page_num: Optional[int] = None
-    rect: Optional[List[float]] = None 
+    rect: Optional[List[float]] = None # Deprecated, use rects
+    rects: Optional[List[List[float]]] = None 
+
+    from pydantic import model_validator
+
+    @model_validator(mode='before')
+    @classmethod
+    def migrate_rect_to_rects(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # If 'rect' is present but 'rects' is missing, migrate it
+            if 'rect' in data and data['rect'] and 'rects' not in data:
+                data['rects'] = [data['rect']]
+        return data 
 
 class ChatMessage(BaseModel):
     role: str

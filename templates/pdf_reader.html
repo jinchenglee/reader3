@@ -354,7 +354,7 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
         const config = window.pdfData || {};
-        const url = config.pdfUrl;
+        const url = config.pdfUrl + "?v=" + new Date().getTime();
         const bookId = config.bookId;
         // window.bookId is already set
 
@@ -734,32 +734,58 @@
                         targetPageNum = pageNum + 1;
                     }
 
-                    // Normalize rect relative to the CANVAS (same element that gets viewport dimensions on zoom)
+                    // Normalize rects relative to the CANVAS / Container
                     const range = selection.getRangeAt(0);
-                    const rect = range.getBoundingClientRect();
+                    const clientRects = range.getClientRects();
+                    const pageContainerRect = pageContainer.getBoundingClientRect();
+
+                    // Canvas is the reference for coordinate normalization (0-1)
                     const canvasEl = pageContainer.querySelector('canvas');
-                    const refRect = canvasEl ? canvasEl.getBoundingClientRect() : pageContainer.getBoundingClientRect();
-
-                    // Show Menu
-                    selectionMenu.style.display = 'flex';
-                    selectionMenu.style.top = (window.scrollY + rect.top - 40) + 'px';
-                    selectionMenu.style.left = (window.scrollX + rect.left + rect.width / 2 - 75) + 'px';
-
+                    const refRect = canvasEl ? canvasEl.getBoundingClientRect() : pageContainerRect;
                     const refW = refRect.width || 1;
                     const refH = refRect.height || 1;
-                    const x = (rect.left - refRect.left) / refW;
-                    const y = (rect.top - refRect.top) / refH;
-                    const w = Math.min(1 - x, rect.width / refW);
-                    const h = Math.min(1 - y, rect.height / refH);
-                    currentSelectionRect = {
-                        page_num: targetPageNum,
-                        x: Math.max(0, Math.min(1, x)),
-                        y: Math.max(0, Math.min(1, y)),
-                        w: Math.max(0.001, Math.min(1, w)),
-                        h: Math.max(0.001, Math.min(1, h))
-                    };
-                    currentSelectionQuote = selection.toString().trim();
-                    return;
+
+                    let rectsList = [];
+
+                    for (let i = 0; i < clientRects.length; i++) {
+                        const r = clientRects[i];
+                        // Calculate relative coordinates
+                        const x = (r.left - refRect.left) / refW;
+                        const y = (r.top - refRect.top) / refH;
+                        const w = r.width / refW;
+                        const h = r.height / refH;
+
+                        // Filter out tiny/invalid rects
+                        if (w > 0.001 && h > 0.001) {
+                            rectsList.push([
+                                Math.max(0, Math.min(1, x)),
+                                Math.max(0, Math.min(1, y)),
+                                Math.max(0, Math.min(1, w)),
+                                Math.max(0, Math.min(1, h))
+                            ]);
+                        }
+                    }
+
+                    if (rectsList.length > 0) {
+                        // Position menu based on the first rect or the bounding rect of the range
+                        const boundRect = range.getBoundingClientRect();
+                        selectionMenu.style.display = 'flex';
+                        selectionMenu.style.top = (window.scrollY + boundRect.top - 40) + 'px';
+                        selectionMenu.style.left = (window.scrollX + boundRect.left + boundRect.width / 2 - 75) + 'px';
+
+                        currentSelectionRect = {
+                            page_num: targetPageNum,
+                            // Fallback single rect for legacy or logic that expects it (first rect or bounding)
+                            x: rectsList[0][0],
+                            y: rectsList[0][1],
+                            w: rectsList[0][2],
+                            h: rectsList[0][3],
+                            // IMPORTANT: Store the full list of rects
+                            rects: rectsList
+                        };
+                        currentSelectionQuote = selection.toString().trim();
+                        return;
+                    }
                 }
             }
             if (!selectionMenu.contains(e.target)) {
@@ -779,6 +805,7 @@
                     chapter_index: 0, // PDF treats whole file as chap 0 for now
                     page_num: currentSelectionRect.page_num,
                     rect: [currentSelectionRect.x, currentSelectionRect.y, currentSelectionRect.w, currentSelectionRect.h],
+                    rects: currentSelectionRect.rects, // Send the list of rects
                     quote: currentSelectionQuote
                 },
                 content: {
@@ -875,7 +902,9 @@
             }
 
             currentAnnotations.forEach(ann => {
-                if (!ann.target.rect) return;
+                const rects = ann.target.rects || (ann.target.rect ? [ann.target.rect] : []);
+                if (rects.length === 0) return;
+
                 const annPage = ann.target.page_num;
 
                 // Is this annotation on a visible page?
@@ -893,23 +922,30 @@
                         // Use dedicated highlight-layer (sibling of canvas/textLayer); coords match selection container
                         const layer = container.querySelector('.highlight-layer') || container;
 
-                        const div = document.createElement('div');
-                        div.className = 'highlight-rect';
-                        if (ann.type !== 'highlight') div.classList.add('has-note');
+                        rects.forEach(r => {
+                            const div = document.createElement('div');
+                            div.className = 'highlight-rect';
+                            if (ann.type !== 'highlight') div.classList.add('has-note');
 
-                        div.style.left = (ann.target.rect[0] * 100) + '%';
-                        div.style.top = (ann.target.rect[1] * 100) + '%';
-                        div.style.width = (ann.target.rect[2] * 100) + '%';
-                        div.style.height = (ann.target.rect[3] * 100) + '%';
+                            // Style as Pink Underline
+                            // Remove background, use border-bottom
+                            div.style.background = 'transparent';
+                            div.style.borderBottom = '2px solid #ff69b4'; // HotPink
 
-                        div.dataset.id = ann.id;
+                            div.style.left = (r[0] * 100) + '%';
+                            div.style.top = (r[1] * 100) + '%';
+                            div.style.width = (r[2] * 100) + '%';
+                            div.style.height = (r[3] * 100) + '%';
 
-                        div.onclick = (e) => {
-                            e.stopPropagation();
-                            window.RightSidebar.openThread(ann.id);
-                        };
+                            div.dataset.id = ann.id;
 
-                        layer.appendChild(div);
+                            div.onclick = (e) => {
+                                e.stopPropagation();
+                                window.RightSidebar.openThread(ann.id);
+                            };
+
+                            layer.appendChild(div);
+                        });
                     }
                 }
             });

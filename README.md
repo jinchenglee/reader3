@@ -24,6 +24,19 @@ Similarly, you can also import PDF files. Just run the same command on a `.pdf` 
 uv run reader3.py ~/Downloads/mydocument.pdf
 ```
 
+### Troubleshooting PDF Text Selection
+
+If you import a PDF (like a scanned book) and cannot select text on some pages, you can use the OCR tool to add a text layer.
+
+```bash
+# Run on a specific book directory (fuzzy match supported)
+uv run tools/ocr_book.py "Name of Book"
+
+# Or run on a specific PDF file
+uv run tools/ocr_book.py path/to/book.pdf
+```
+
+
 ### Testing
 
 Run the integration test suite to verify the application:

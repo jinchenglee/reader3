@@ -160,11 +160,15 @@ def test_regression_ui_simplification(client, create_test_epub, create_test_pdf)
     assert 'id="tab-btn-thread"' not in resp_epub.text, "Sidebar: Thread tab button should be removed"
     assert 'id="tab-thread"' not in resp_epub.text, "Sidebar: Thread tab content div should be removed"
     
-    # 4. PDF Normalization check
-    # We look for the division by containerRect.width or similar in the mouseup handler logic
-    # "x: (rect.left - containerRect.left) / containerRect.width"
-    # Or check renderHighlights using '%'
-    assert "div.style.left = (ann.target.rect[0] * 100) + '%'" in resp_pdf.text, "PDF: Render logic should use percentages"
+    # 4. PDF Normalization check (Multi-rect support & Styling)
+    # The new logic iterates over `rects` and uses `r[0]`, `r[1]`, etc.
+    # We check for the loop or the new variable usage.
+    assert "rects.forEach(r => {" in resp_pdf.text or "div.style.left = (r[0] * 100) + '%'" in resp_pdf.text, "PDF: Render logic should use percentages with multi-rect support"
+    
+    # 5. Styling Check (Pink Underline)
+    # Ensure background is transparent and border is pink (or borderBottom is set)
+    assert "div.style.background = 'transparent'" in resp_pdf.text or "div.style.background='transparent'" in resp_pdf.text, "PDF: Highlight background should be transparent"
+    assert "div.style.borderBottom" in resp_pdf.text and "#ff69b4" in resp_pdf.text, "PDF: Highlight should use pink underline (#ff69b4)"
 
 
 def test_regression_pdf_annotation_edit_delete_and_scale(client, create_test_pdf):
