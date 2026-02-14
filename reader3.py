@@ -348,7 +348,12 @@ if __name__ == "__main__":
 
     epub_file = sys.argv[1]
     assert os.path.exists(epub_file), "File not found."
-    base_name = os.path.splitext(os.path.basename(epub_file))[0] + "_data"
+    
+    # Sanitize the directory name
+    original_base_name = os.path.splitext(os.path.basename(epub_file))[0]
+    safe_base_name = "".join([c for c in original_base_name if c.isalnum() or c in '._-']).strip()
+    base_name = safe_base_name + "_data"
+    
     out_dir = os.path.join("books", base_name)
     os.makedirs("books", exist_ok=True)
 
