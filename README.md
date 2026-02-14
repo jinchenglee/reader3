@@ -29,7 +29,7 @@ uv run reader3.py ~/Downloads/mydocument.pdf
 Run the integration test suite to verify the application:
 
 ```bash
-uv run pytest tests/test_server.py
+uv run pytest 
 ```
 
 ### Running the Server

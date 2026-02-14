@@ -328,7 +328,8 @@
 
         <div style="display: flex; gap: 10px;">
             <button id="toggle-chat-btn" class="btn-icon" title="Toggle Chat"
-                style="font-size: 0.9em; border: 1px solid #555;">💬 Chat</button>
+                style="font-size: 0.9em; border: 1px solid #555;" onclick="window.RightSidebar.toggle()">💬
+                Chat</button>
         </div>
     </header>
 
@@ -414,11 +415,53 @@
                 }
             </script>
 
-            <!-- CHAT SIDEBAR (Shared) -->
-            {% include "components/chat_component.html" %}
+            <!-- UNIFIED RIGHT SIDEBAR -->
+            {% include "components/right_sidebar.html" %}
 
         </div>
     </div>
+
+    <!-- Selection Menu (Popover) -->
+    <div id="selection-menu"
+        style="display:none; position:absolute; z-index:100; background:#333; color:white; padding:5px; border-radius:4px;">
+        <button onclick="triggerAnnotation('highlight')">Highlight</button>
+        <button onclick="triggerAskAI()">Ask AI</button>
+    </div>
+
+    <style>
+        #selection-menu button {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            padding: 5px 10px;
+            font-size: 0.9em;
+        }
+
+        #selection-menu button:hover {
+            background: #555;
+            border-radius: 3px;
+        }
+
+        .highlight-span {
+            background-color: #ffeb3b80;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+
+        .highlight-span:hover {
+            border-bottom-color: #f39c12;
+        }
+
+        .highlight-span.has-note {
+            border-bottom: 2px solid #e74c3c;
+        }
+
+        .highlight-span.active {
+            box-shadow: 0 0 0 2px #3498db;
+            background-color: rgba(52, 152, 219, 0.3);
+        }
+    </style>
 
     <script>
         // --- State & Persistence ---
@@ -781,20 +824,348 @@
             findAndGo(href);
         });
 
-        // --- Text Selection Hook for Chat ---
-        document.addEventListener('selectionchange', () => {
+        // --- Text Selection Hook for Chat (Legacy) ---
+        // We override this with new Annotation Logic
+
+        // --- Annotation System ---
+        const selectionMenu = document.getElementById('selection-menu');
+
+        document.addEventListener('mouseup', (e) => {
+            const selection = window.getSelection();
+            if (selection.toString().trim().length > 0) {
+                // If selection is inside book content
+                const contentDiv = document.getElementById('book-content-div');
+                if (contentDiv.contains(selection.anchorNode)) {
+                    // Show menu
+                    const range = selection.getRangeAt(0);
+                    const rect = range.getBoundingClientRect();
+
+                    selectionMenu.style.display = 'flex';
+                    selectionMenu.style.top = (window.scrollY + rect.top - 40) + 'px';
+                    selectionMenu.style.left = (window.scrollX + rect.left + rect.width / 2 - 75) + 'px';
+                    return;
+                }
+            }
+            // Hide if clicked elsewhere, BUT check if clicking menu itself
+            if (!selectionMenu.contains(e.target)) {
+                selectionMenu.style.display = 'none';
+            }
+        });
+
+        // Current temporary selection state
+        function getSelectedQuote() {
+            const selection = window.getSelection();
+            return selection.toString().trim();
+        }
+
+        async function triggerAnnotation(type) {
+            const quote = getSelectedQuote();
+            if (!quote) return;
+
+            selectionMenu.style.display = 'none';
+
+            // Create annotation
+            const payload = {
+                type: (type === 'ask') ? 'chat_thread' : type, // 'ask' starts a chat thread
+                target: {
+                    chapter_index: chapterIndex,
+                    quote: quote
+                },
+                content: {
+                    text: (type === 'note') ? "New Note" : "", // placeholder
+                    color: "yellow"
+                }
+            };
+
+            try {
+                const resp = await fetch(`/api/annotations/${bookId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+
+                // Refresh highlights
+                await loadAnnotations();
+
+                // If Note or Ask, open sidebar immediately
+                if (type === 'note') {
+                    window.RightSidebar.openThread(data.id);
+                }
+                // Ask is now handled by triggerAskAI
+            } catch (e) {
+                console.error("Failed to create annotation", e);
+            }
+        }
+
+        function triggerAskAI() {
             const selection = window.getSelection();
             const text = selection.toString().trim();
 
-            if (text && text.length > 0) {
-                const contentDiv = document.getElementById('book-content-div');
-                if (contentDiv && contentDiv.contains(selection.anchorNode)) {
-                    if (window.updateChatContext) {
-                        window.updateChatContext(text);
-                    }
+            // Clean up selection menu
+            document.getElementById('selection-menu').style.display = 'none';
+
+            if (text) {
+                if (window.RightSidebar && window.RightSidebar.openGlobalChat) {
+                    window.RightSidebar.openGlobalChat(text);
+                } else {
+                    console.error("RightSidebar.openGlobalChat not available");
                 }
             }
-        });
+        }
+
+
+
+        // --- Rendering Logic (Quote Matching) ---
+        let currentAnnotations = [];
+
+        async function loadAnnotations() {
+            try {
+                const resp = await fetch(`/api/annotations/${bookId}`);
+                const annotations = await resp.json();
+                currentAnnotations = annotations;
+                renderHighlights(annotations);
+                renderSidebarList(annotations);
+            } catch (e) { console.error(e); }
+        }
+
+        window.loadAnnotationsList = loadAnnotations;
+        window.reloadAnnotations = loadAnnotations;
+
+        function renderHighlights(annotations) {
+            document.querySelectorAll('.highlight-span').forEach(span => {
+                const parent = span.parentNode;
+                parent.replaceChild(document.createTextNode(span.textContent), span);
+                parent.normalize();
+            });
+
+            const chapterAnns = annotations.filter(a => a.target.chapter_index === chapterIndex);
+            const contentDiv = document.getElementById('book-content-div');
+            if (!contentDiv) return;
+
+            function normalizeWs(s) {
+                return (s || '').replace(/\s+/g, ' ').trim();
+            }
+            function findRangeForQuote(root, quote) {
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                const nodes = [];
+                let totalLen = 0;
+                let node;
+                while (node = walker.nextNode()) {
+                    const len = node.nodeValue.length;
+                    nodes.push({ node: node, start: totalLen, end: totalLen + len });
+                    totalLen += len;
+                }
+                const fullText = nodes.map(n => n.node.nodeValue).join('');
+                let idx = fullText.indexOf(quote);
+                let endIdx = idx === -1 ? -1 : idx + quote.length;
+
+                if (idx === -1) {
+                    const fullNorm = normalizeWs(fullText);
+                    const quoteNorm = normalizeWs(quote);
+                    if (!quoteNorm) return null;
+                    const idxNorm = fullNorm.indexOf(quoteNorm);
+                    if (idxNorm === -1) return null;
+                    const endNorm = idxNorm + quoteNorm.length;
+                    const origToNorm = [];
+                    let normPos = 0;
+                    for (let i = 0; i < fullText.length; i++) {
+                        origToNorm[i] = normPos;
+                        if (!/\s/.test(fullText[i])) normPos++;
+                        else if (i === 0 || !/\s/.test(fullText[i - 1])) normPos++;
+                    }
+                    let startOrig = fullText.length, endOrig = fullText.length;
+                    for (let i = 0; i < fullText.length; i++) {
+                        if (origToNorm[i] === idxNorm) { startOrig = i; break; }
+                    }
+                    for (let i = 0; i < fullText.length; i++) {
+                        if (origToNorm[i] >= endNorm) { endOrig = i; break; }
+                    }
+                    idx = startOrig;
+                    endIdx = endOrig;
+                } else {
+                    endIdx = idx + quote.length;
+                }
+
+                let startNode = null, startOff = 0, endNode = null, endOff = 0;
+                for (let i = 0; i < nodes.length; i++) {
+                    if (idx >= nodes[i].start && idx < nodes[i].end) {
+                        startNode = nodes[i].node;
+                        startOff = idx - nodes[i].start;
+                    }
+                    if (endIdx > nodes[i].start && endIdx <= nodes[i].end) {
+                        endNode = nodes[i].node;
+                        endOff = endIdx - nodes[i].start;
+                    }
+                }
+                if (!startNode || !endNode) return null;
+                const range = document.createRange();
+                range.setStart(startNode, startOff);
+                range.setEnd(endNode, endOff);
+                return range;
+            }
+
+            chapterAnns.forEach(ann => {
+                if (!ann.target || !ann.target.quote) return;
+
+                const quote = ann.target.quote;
+                const range = findRangeForQuote(contentDiv, quote);
+                if (!range) return;
+
+                const span = document.createElement('span');
+                span.className = 'highlight-span';
+                if (ann.type !== 'highlight') span.classList.add('has-note');
+                span.dataset.id = ann.id;
+                span.style.backgroundColor = 'rgba(255, 235, 59, 0.6)';
+                if (ann.type !== 'highlight') span.style.backgroundColor = 'rgba(221, 221, 221, 0.85)';
+                span.style.cursor = 'pointer';
+
+                span.onclick = (e) => {
+                    e.stopPropagation();
+                    window.activateHighlight(ann.id);
+                    if (window.RightSidebar) window.RightSidebar.open();
+                };
+
+                try {
+                    const fragment = range.extractContents();
+                    span.appendChild(fragment);
+                    range.insertNode(span);
+                } catch (err) { /* fallback: single-node wrap */ }
+            });
+        }
+
+        async function updateAnnotationContent(id, newText) {
+            try {
+                // Find current
+                const resp = await fetch(`/api/annotations/${bookId}`);
+                const all = await resp.json();
+                const target = all.find(a => a.id === id);
+                if (!target) return;
+
+                target.content.text = newText;
+
+                await fetch(`/api/annotations/${bookId}/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(target)
+                });
+
+                await loadAnnotations();
+            } catch (e) { console.error(e); }
+        }
+        window.updateAnnotationContent = updateAnnotationContent;
+
+        function renderSidebarList(annotations) {
+            const listContainer = document.getElementById('annotations-list-container');
+            if (!listContainer) return;
+
+            const chapterAnns = annotations.filter(a => (a.target && a.target.chapter_index != null) && a.target.chapter_index === chapterIndex);
+            if (chapterAnns.length === 0) {
+                listContainer.innerHTML = '<div style="padding:20px; color:#999; text-align:center;">No annotations in this section.</div>';
+                return;
+            }
+
+            listContainer.innerHTML = chapterAnns.map(a => {
+                const ch = (a.target && a.target.chapter_index != null) ? a.target.chapter_index + 1 : '?';
+                return `
+                <div class="annotation-item" onclick="window.activateHighlight('${a.id}')" data-id="${a.id}">
+                    <div class="annotation-quote">Section ${ch}: "${(a.target && a.target.quote ? a.target.quote : "").substring(0, 50)}..."</div>
+                    <div class="annotation-note-preview">
+                        ${a.content && a.content.text ? marked.parse(a.content.text) : '<span style="color:#ccc;font-style:italic;">No note</span>'}
+                    </div>
+                    <div class="annotation-meta" style="margin-top:5px; align-items:center;">
+                        <span>${new Date(a.created_at).toLocaleTimeString()}</span>
+                        <div class="actions">
+                            <button class="ann-edit-btn" data-id="${a.id}" title="Edit">✏️</button>
+                            <button class="ann-delete-btn" data-id="${a.id}" title="Delete">🗑️</button>
+                        </div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+
+            listContainer.querySelectorAll('.ann-edit-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const ann = currentAnnotations.find(x => x.id === btn.dataset.id);
+                    window.RightSidebar.startEdit(btn.dataset.id, ann && ann.content ? (ann.content.text || '') : '');
+                });
+            });
+            listContainer.querySelectorAll('.ann-delete-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    window.RightSidebar.deleteAnnotation(btn.dataset.id);
+                });
+            });
+        }
+
+        // --- Thread View Logic ---
+        let currentThreadId = null;
+        window.loadAnnotationThread = async (annId) => {
+            currentThreadId = annId;
+            const resp = await fetch(`/api/annotations/${bookId}`);
+            const all = await resp.json();
+            const ann = all.find(a => a.id === annId);
+
+            if (!ann) return;
+
+            // Store for Edit logic
+            window.currentAnnotation = ann;
+
+            document.getElementById('thread-title').textContent = ann.type === 'chat_thread' ? 'Discussion' : 'Note';
+            document.getElementById('thread-placeholder').style.display = 'none';
+
+            // Render Note Content (Markdown)
+            const noteDisplay = document.getElementById('thread-note-display');
+            if (ann.content.text) {
+                noteDisplay.style.display = 'block';
+                noteDisplay.innerHTML = marked.parse(ann.content.text);
+            } else {
+                noteDisplay.style.display = 'none';
+            }
+
+            // Mount Chat if needed
+            // TODO: Reuse Chat Component Logic via a bridge
+            // For now, let's just show raw messages or placeholder
+            // In a real app we'd re-instantiate the Vue/React component or clean JS class
+        };
+
+        // Highlight Activation: go to chapter if needed, then scroll to highlight
+        window.activateHighlight = async function (annId) {
+            document.querySelectorAll('.highlight-span.active').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.annotation-item.active').forEach(el => el.classList.remove('active'));
+
+            const ann = currentAnnotations.find(a => a.id === annId);
+            const targetChapter = ann && ann.target && (ann.target.chapter_index != null) ? ann.target.chapter_index : null;
+
+            if (targetChapter != null && targetChapter !== chapterIndex) {
+                await loadChapter(targetChapter);
+                await loadAnnotations();
+            }
+
+            const target = document.querySelector(`.highlight-span[data-id="${annId}"]`);
+            if (target) {
+                target.classList.add('active');
+                target.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+
+            const sidebarItem = document.querySelector(`.annotation-item[data-id="${annId}"]`);
+            if (sidebarItem) {
+                sidebarItem.classList.add('active');
+                sidebarItem.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+        }
+
+        // Load initially
+        window.addEventListener('load', loadAnnotations);
+
+        // Reload when chapter changes (hooking into loadChapter)
+        const originalLoadChapter = loadChapter;
+        loadChapter = async function (idx, anchor) {
+            await originalLoadChapter(idx, anchor);
+            await loadAnnotations();
+        };
+
 
         // --- Go To Section Logic ---
         const gotoInput = document.getElementById('goto-section-input');

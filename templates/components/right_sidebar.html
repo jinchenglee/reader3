@@ -1,0 +1,392 @@
+<!-- Right Sidebar: Unified Context Pane -->
+<style>
+    #right-sidebar {
+        width: 350px;
+        background: #f8f9fa;
+        border-left: 1px solid #dee2e6;
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        height: 100%;
+        transition: margin-right 0.3s ease;
+        position: relative;
+        /* Anchor resize handle */
+    }
+
+    #right-sidebar.hidden {
+        margin-right: -350px;
+        display: none;
+        /* Actually hide to remove layout space */
+    }
+
+    /* Tabs */
+    .sidebar-tabs {
+        display: flex;
+        border-bottom: 1px solid #dee2e6;
+        background: #e9ecef;
+    }
+
+    .sidebar-tab {
+        flex: 1;
+        padding: 10px;
+        text-align: center;
+        cursor: pointer;
+        font-family: -apple-system, sans-serif;
+        font-size: 0.9em;
+        color: #495057;
+        font-weight: 500;
+        border-bottom: 3px solid transparent;
+    }
+
+    .sidebar-tab:hover {
+        background: #dee2e6;
+    }
+
+    .sidebar-tab.active {
+        border-bottom-color: #3498db;
+        color: #3498db;
+        background: #fff;
+    }
+
+    /* Tab Content Area */
+    .sidebar-content {
+        flex: 1;
+        overflow-y: auto;
+        display: none;
+        padding: 0;
+        position: relative;
+    }
+
+    .sidebar-content.active {
+        display: flex;
+        /* Flex to allow chat component to fill height */
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+        /* Let child handle scrolling if needed */
+    }
+
+    /* List View Items */
+    .annotation-item {
+        padding: 15px;
+        border-bottom: 1px solid #eee;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .annotation-item:hover {
+        background: #fff;
+        border-left: 3px solid #3498db;
+    }
+
+    .annotation-quote {
+        font-family: "Georgia", serif;
+        font-style: italic;
+        color: #555;
+        margin-bottom: 8px;
+        font-size: 0.9em;
+        border-left: 2px solid #ddd;
+        padding-left: 8px;
+    }
+
+    .annotation-meta {
+        font-size: 0.8em;
+        color: #999;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .annotation-note-preview {
+        font-size: 0.9em;
+        color: #333;
+        margin-top: 5px;
+    }
+
+    /* Single Thread View */
+    .thread-header {
+        padding: 10px;
+        background: #fff;
+        border-bottom: 1px solid #eee;
+        font-size: 0.9em;
+        color: #555;
+    }
+
+    .thread-back {
+        cursor: pointer;
+        color: #3498db;
+        margin-right: 10px;
+        text-decoration: underline;
+    }
+
+    /* Markdown Styles for Notes */
+    .note-content {
+        padding: 15px;
+        background: #fff;
+        font-size: 0.95em;
+        line-height: 1.5;
+    }
+
+    .note-content h1,
+    .note-content h2 {
+        font-size: 1.1em;
+        margin: 0.5em 0;
+    }
+
+    .note-content code {
+        background: #f1f1f1;
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-family: monospace;
+    }
+
+    .note-content pre {
+        background: #f1f1f1;
+        padding: 10px;
+        overflow-x: auto;
+        border-radius: 4px;
+    }
+
+    .note-content ul {
+        padding-left: 20px;
+    }
+</style>
+
+<!-- Load marked.js for Markdown -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<div id="right-sidebar">
+    <div class="sidebar-tabs">
+        <div class="sidebar-tab" data-tab="tab-list" id="tab-btn-list">Annotations</div>
+        <div class="sidebar-tab active" data-tab="tab-general" id="tab-btn-general">Chat</div>
+    </div>
+
+    <!-- 1. Thread (Context) View - REMOVED -->
+    <!-- Edit/Delete logic moved to List Item or Modal -->
+
+    <!-- Hidden Edit Container for List View Inline Edits -->
+    <div id="inline-edit-overlay"
+        style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(255,255,255,0.95); z-index:10; flex-direction:column; padding:20px;">
+        <h3>Edit Note</h3>
+        <textarea id="note-edit-textarea"
+            style="flex:1; margin-bottom:10px; padding:10px; border:1px solid #ddd;"></textarea>
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button onclick="window.RightSidebar.cancelEdit()" style="padding:8px 16px; cursor:pointer;">Cancel</button>
+            <button onclick="window.RightSidebar.saveEdit()"
+                style="padding:8px 16px; background:#3498db; color:white; border:none; cursor:pointer;">Save</button>
+        </div>
+    </div>
+
+    <!-- 2. List View -->
+    <div id="tab-list" class="sidebar-content" style="overflow-y: auto;">
+        <div id="annotations-list-container">
+            <!-- Items injected by JS -->
+            <div style="padding:20px; text-align:center; color:#999;" id="loading-annotations">
+                Loading annotations...
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. General Chat View -->
+    <div id="tab-general" class="sidebar-content active">
+        <!-- This is where the Global Chat lives now -->
+        {% include "components/chat_component.html" %}
+    </div>
+</div>
+
+<script>
+    // --- Resizing Logic ---
+    const sidebar = document.getElementById('right-sidebar');
+    // Create handle dynamically if not exists (or could add to HTML)
+    const resizeHandle = document.createElement('div');
+    resizeHandle.id = 'sidebar-resize-handle';
+    resizeHandle.style.cssText = `
+        position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+        cursor: col-resize; z-index: 100;
+    `;
+    resizeHandle.addEventListener('mouseover', () => resizeHandle.style.background = 'rgba(0,0,0,0.1)');
+    resizeHandle.addEventListener('mouseout', () => resizeHandle.style.background = 'transparent');
+    sidebar.appendChild(resizeHandle);
+
+    let isResizingSidebar = false;
+    resizeHandle.addEventListener('mousedown', (e) => {
+        isResizingSidebar = true;
+        document.body.style.cursor = 'col-resize';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizingSidebar) return;
+        const newWidth = window.innerWidth - e.clientX;
+        if (newWidth > 200 && newWidth < 800) {
+            sidebar.style.width = newWidth + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizingSidebar) {
+            isResizingSidebar = false;
+            document.body.style.cursor = '';
+        }
+    });
+
+    // --- Tab Switching ---
+    const tabs = document.querySelectorAll('.sidebar-tab');
+    const panes = document.querySelectorAll('.sidebar-content');
+
+    // Make public so we can switch from outside
+    window.switchSidebarTab = function (tabId) {
+        tabs.forEach(t => t.classList.remove('active'));
+        panes.forEach(p => p.classList.remove('active'));
+
+        document.querySelector(`.sidebar-tab[data-tab="${tabId}"]`).classList.add('active');
+        document.getElementById(tabId).classList.add('active');
+
+        // If switching to list, reload
+        if (tabId === 'tab-list') window.loadAnnotationsList();
+    }
+
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            window.switchSidebarTab(tab.dataset.tab);
+        });
+    });
+
+    // Toggle Sidebar visibility
+    function toggleRightSidebar(show) {
+        if (show === undefined) {
+            sidebar.classList.toggle('hidden');
+        } else if (show) {
+            sidebar.classList.remove('hidden');
+        } else {
+            sidebar.classList.add('hidden');
+        }
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+    }
+
+    // Default open check (User request 1)
+    // We'll let the parent page call .open() or remove .hidden class
+
+    // --- Edit/Delete Logic ---
+    // --- Edit/Delete Logic ---
+    async function deleteAnnotation(id) {
+        if (!confirm("Are you sure you want to delete this?")) return;
+        const targetId = id || window.currentThreadId;
+        if (!targetId) return;
+
+        try {
+            const resp = await fetch(`/api/annotations/${window.bookId}/${targetId}`, { method: 'DELETE' });
+            if (resp.ok) {
+                if (window.reloadAnnotations) {
+                    await window.reloadAnnotations();
+                } else if (window.loadAnnotationsList) {
+                    window.loadAnnotationsList();
+                }
+                if (window.editingId === targetId) cancelEdit();
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    function startEdit(id, currentText) {
+        window.editingId = id;
+
+        let editContainer = document.getElementById('global-edit-overlay');
+        if (!editContainer) {
+            editContainer = document.createElement('div');
+            editContainer.id = 'global-edit-overlay';
+            editContainer.style.cssText = "position:absolute; top:50px; left:10px; right:10px; background:#333; padding:10px; border:1px solid #555; z-index:1000; box-shadow:0 4px 10px rgba(0,0,0,0.5); border-radius:4px;";
+            editContainer.innerHTML = `
+                <div style="margin-bottom:5px; font-weight:bold; color:#ccc;">Edit Note</div>
+                <textarea id='global-edit-textarea' style='width:100%; height:100px; background:#222; color:white; border:1px solid #444; padding:5px; box-sizing:border-box;'></textarea>
+                <div style='margin-top:10px; display:flex; justify-content:flex-end; gap:10px;'>
+                    <button onclick='window.RightSidebar.cancelEdit()'>Cancel</button>
+                    <button onclick='window.RightSidebar.saveEdit()' style='background:#2ecc71; border:none; padding:5px 10px; cursor:pointer; color:white; border-radius:3px;'>Save</button>
+                </div>
+            `;
+            document.getElementById('right-sidebar').appendChild(editContainer);
+        }
+
+        document.getElementById('global-edit-textarea').value = currentText || "";
+        editContainer.style.display = 'block';
+
+        setTimeout(() => document.getElementById('global-edit-textarea').focus(), 100);
+    }
+
+    function cancelEdit() {
+        const el = document.getElementById('global-edit-overlay');
+        if (el) el.style.display = 'none';
+        window.editingId = null;
+    }
+
+    async function saveEdit() {
+        const newText = document.getElementById('global-edit-textarea').value;
+        const id = window.editingId;
+        if (!id) return;
+
+        // Use the global helper in reader.html/pdf_reader.html to update
+        if (window.updateAnnotationContent) {
+            await window.updateAnnotationContent(id, newText);
+        } else {
+            console.error("updateAnnotationContent missing");
+        }
+
+        cancelEdit();
+        if (window.reloadAnnotations) {
+            await window.reloadAnnotations();
+        } else if (window.loadAnnotationsList) {
+            window.loadAnnotationsList();
+        }
+    }
+
+    // Public API
+    window.RightSidebar = {
+        open: () => toggleRightSidebar(true),
+        close: () => toggleRightSidebar(false),
+        toggle: () => toggleRightSidebar(),
+        openThread: (annotationId, autoAskText) => {
+            // Thread view is removed. Switch to list.
+            window.switchSidebarTab('tab-list');
+
+            // Highlight visual
+            if (window.activateHighlight) window.activateHighlight(annotationId);
+
+            toggleRightSidebar(true);
+
+            // Scroll to item
+            setTimeout(() => {
+                const item = document.querySelector(`.annotation-item[data-id="${annotationId}"]`);
+                if (item) item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 300);
+
+            if (autoAskText) {
+                window.switchSidebarTab('tab-general');
+                setTimeout(() => {
+                    if (window.updateChatContext) window.updateChatContext(autoAskText);
+                    const chatInput = document.getElementById('chat-input');
+                    if (chatInput) {
+                        chatInput.value = autoAskText;
+                        chatInput.focus();
+                    }
+                }, 500);
+            }
+        },
+        openGlobalChat: (contextText) => {
+            window.switchSidebarTab('tab-general');
+            toggleRightSidebar(true);
+
+            if (window.updateChatContext) {
+                window.updateChatContext(contextText);
+            }
+
+            // Focus input
+            setTimeout(() => {
+                const chatInput = document.getElementById('chat-input');
+                if (chatInput) chatInput.focus();
+            }, 100);
+        },
+        reloadList: () => window.loadAnnotationsList(),
+        deleteAnnotation: deleteAnnotation,
+        startEdit: startEdit,
+        cancelEdit: cancelEdit,
+        saveEdit: saveEdit
+    };
+</script>

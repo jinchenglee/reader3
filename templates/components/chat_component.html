@@ -2,49 +2,24 @@
 <!-- CSS for Chat -->
 <style>
     :root {
-        --sidebar-width: 350px;
         --chat-bg: #E7EEF6;
         --primary-color: #3498db;
     }
 
     #chat-sidebar {
-        width: var(--sidebar-width);
-        min-width: 250px;
-        max-width: 600px;
-        background: #fff;
-        border-left: 1px solid #ccc;
+        /* Removed fixed width and sidebar positioning */
         display: flex;
         flex-direction: column;
-        transition: margin-right 0.3s ease;
-        position: relative;
-        z-index: 5;
-        flex-shrink: 0;
+        flex: 1;
         height: 100%;
-        /* FIX: Match parent height, don't force viewport height */
+        background: #fff;
     }
 
     #chat-sidebar.collapsed {
-        margin-right: calc(var(--sidebar-width) * -1);
+        /* No longer used */
     }
 
-    /* Resize Handle */
-    #resize-handle {
-        position: absolute;
-        left: -5px;
-        /* Pull left to make it easier to grab */
-        top: 0;
-        bottom: 0;
-        width: 10px;
-        /* Wider hit area */
-        cursor: col-resize;
-        z-index: 20;
-        background: transparent;
-    }
-
-    #resize-handle:hover {
-        background: rgba(52, 152, 219, 0.3);
-        /* Visible feedback */
-    }
+    /* Resize Handle Removed */
 
     .chat-header {
         padding: 10px 15px;
@@ -229,7 +204,7 @@
 
 <!-- Sidebar HTML -->
 <div id="chat-sidebar">
-    <div id="resize-handle" title="Drag to resize"></div>
+    <!-- Resize handle removed -->
     <div class="chat-header">
         <span>AI Assistant</span>
         <div style="display: flex; gap: 5px; align-items: center;">
@@ -493,53 +468,17 @@
         alert("Settings saved!");
     });
 
-    // Toggle Logic (Expects a button with id 'toggle-chat-btn' to exist in parent)
+    // Toggle Logic (Deprecated/Removed - handled by parent)
+    /*
     const toggleBtn = document.getElementById('toggle-chat-btn');
-    if (toggleBtn) {
-        toggleBtn.addEventListener('click', () => {
-            chatSidebar.classList.toggle('collapsed');
-            const isCollapsed = chatSidebar.classList.contains('collapsed');
-            toggleBtn.textContent = isCollapsed ? '💬 Show Chat' : '💬 Hide Chat';
-            localStorage.setItem('chat_collapsed', isCollapsed ? '1' : '0');
-            // Disable transition during drag if previously set, re-enable it
-            chatSidebar.style.transition = 'margin-right 0.3s ease';
-        });
-    }
+    ...
+    */
 
-    // --- Resizing Logic ---
+    // --- Resizing Logic (Removed) ---
+    /*
     const handle = document.getElementById('resize-handle');
-    let isResizing = false;
-
-    handle.addEventListener('mousedown', (e) => {
-        isResizing = true;
-        document.body.style.cursor = 'col-resize'; // Change cursor globally
-        chatSidebar.style.transition = 'none'; // Disable transition during drag
-        e.preventDefault(); // Prevent text selection
-    });
-
-    document.addEventListener('mousemove', (e) => {
-        if (!isResizing) return;
-
-        // Calculate new width: Window Width - Mouse X
-        let newWidth = window.innerWidth - e.clientX;
-
-        // Constraints
-        if (newWidth < 250) newWidth = 250;
-        if (newWidth > 800) newWidth = 800;
-
-        document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
-    });
-
-    document.addEventListener('mouseup', () => {
-        if (isResizing) {
-            isResizing = false;
-            document.body.style.cursor = '';
-            chatSidebar.style.transition = 'margin-right 0.3s ease'; // Re-enable toggle transition
-            // Persist the width
-            const currentWidth = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width').trim();
-            localStorage.setItem('chat_sidebar_width', currentWidth);
-        }
-    });
+    ...
+    */
 
     // Clear Chat button
     document.getElementById('clear-chat-btn').addEventListener('click', async () => {
@@ -549,18 +488,7 @@
         await clearChatHistoryOnServer();
     });
 
-    // --- Restore persisted sidebar width and collapsed state ---
-    (function restoreChatState() {
-        const savedWidth = localStorage.getItem('chat_sidebar_width');
-        if (savedWidth) {
-            document.documentElement.style.setProperty('--sidebar-width', savedWidth);
-        }
-        const savedCollapsed = localStorage.getItem('chat_collapsed');
-        if (savedCollapsed === '1') {
-            chatSidebar.classList.add('collapsed');
-            if (toggleBtn) toggleBtn.textContent = '💬 Show Chat';
-        }
-    })();
+    // --- Restore persisted sidebar width and collapsed state (Removed) ---
 
     // Load chat history on page load
     loadChatHistory();
