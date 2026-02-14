@@ -395,6 +395,8 @@
             <script type="application/json" id="reader-data">
             {
                 "bookId": "{{ book_id }}",
+                "bookTitle": "{{ book.metadata.title | replace('"', '\\"') }}",
+                "bookAuthor": "{{ book.metadata.authors | join(', ') | replace('"', '\\"') }}",
                 "initialScroll": {{ initial_scroll }},
                 "initialZoom": {{ initial_zoom }},
                 "chapterIndex": {{ chapter_index }},

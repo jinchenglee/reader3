@@ -262,6 +262,8 @@
         <script type="application/json" id="pdf-data">
         {
             "bookId": "{{ book_id }}",
+            "bookTitle": "{{ book.metadata.title | replace('"', '\\"') }}",
+            "bookAuthor": "{{ book.metadata.authors | join(', ') | replace('"', '\\"') }}",
             "pdfUrl": "{{ pdf_url }}",
             "initialPage": {{ initial_page }},
             "initialZoom": {{ initial_zoom }},

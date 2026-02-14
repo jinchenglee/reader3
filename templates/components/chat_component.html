@@ -390,10 +390,43 @@
             return;
         }
 
+        // --- 1. Construct System Message with Book Context ---
+        let systemContent = "You are a helpful reading assistant.";
+
+        // Try to get book info from parent scope (reader.html / pdf_reader.html)
+        const bookTitle = (window.readerData && window.readerData.bookTitle) || (window.pdfData && window.pdfData.bookTitle);
+        const bookAuthor = (window.readerData && window.readerData.bookAuthor) || (window.pdfData && window.pdfData.bookAuthor);
+
+        if (bookTitle) {
+            systemContent += ` You are assisting the user in reading the book "${bookTitle}"`;
+            if (bookAuthor) {
+                systemContent += ` by ${bookAuthor}`;
+            }
+            systemContent += ". Answer questions about the user's selected text or the book in general.";
+        } else {
+            systemContent += " Answer questions about the user's selected text.";
+        }
+
+        // --- 2. Build Message History (System + Last 10) ---
         const messages = [
-            { role: "system", content: "You are a helpful reading assistant. Answer questions about the user's selected text." }
+            { role: "system", content: systemContent }
         ];
 
+        // Add up to 10 previous messages from history (excluding the one we just added)
+        // We just pushed the new one, so let's slice up to -1
+        // Actually, we want to include the history BEFORE this new message
+        // The chatHistory array ALREADY has the new user message at the end.
+
+        // Let's take the history excluding the last item (current user msg)
+        const historyToInclude = chatHistory.slice(0, -1).slice(-10);
+
+        historyToInclude.forEach(msg => {
+            // Map roles if necessary (our internal 'ai' -> API 'assistant')
+            const apiRole = (msg.role === 'ai') ? 'assistant' : msg.role;
+            messages.push({ role: apiRole, content: msg.content });
+        });
+
+        // Add the current user message with context
         if (contextSnapshot) {
             messages.push({ role: "user", content: `Context:\n"""${contextSnapshot}"""\n\nQuestion: ${finalPrompt}` });
         } else {
