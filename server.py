@@ -147,6 +147,87 @@ async def clear_chat_history(book_id: str):
     delete_chat_history(book_id)
     return {"status": "ok"}
 
+# --- Annotations API ---
+
+from annotations import (
+    Annotation, AnnotationContent, AnnotationTarget, ChatMessage,
+    load_annotations, save_annotation_to_disk, 
+    delete_annotation_from_disk, update_annotation_in_disk
+)
+
+@app.get("/api/annotations/{book_id}")
+async def get_annotations(book_id: str):
+    return load_annotations(BOOKS_DIR, book_id)
+
+@app.post("/api/annotations/{book_id}")
+async def create_annotation(book_id: str, annotation: Annotation):
+    # Ensure ID is unique (it's UUID so unlikely to collide but good practice)
+    # save_annotation_to_disk simply appends
+    try:
+        save_annotation_to_disk(BOOKS_DIR, book_id, annotation)
+        return {"status": "ok", "id": annotation.id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/annotations/{book_id}/{annotation_id}")
+async def delete_annotation(book_id: str, annotation_id: str):
+    try:
+        found = delete_annotation_from_disk(BOOKS_DIR, book_id, annotation_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not found:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    return {"status": "ok"}
+
+@app.put("/api/annotations/{book_id}/{annotation_id}")
+async def update_annotation(book_id: str, annotation_id: str, annotation: Annotation):
+    # Ensure ID matches
+    if annotation.id != annotation_id:
+        raise HTTPException(status_code=400, detail="ID mismatch")
+        
+    try:
+        found = update_annotation_in_disk(BOOKS_DIR, book_id, annotation)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    if not found:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    return {"status": "ok"}
+
+@app.post("/api/annotations/{book_id}/{annotation_id}/chat")
+async def append_annotation_chat(book_id: str, annotation_id: str, message: ChatMessage):
+    """
+    Appends a new message to an existing annotation's chat thread.
+    Use this for context-aware chatting.
+    """
+    annotations = load_annotations(BOOKS_DIR, book_id)
+    target_annotation = None
+    for a in annotations:
+        if a.id == annotation_id:
+            target_annotation = a
+            break
+            
+    if not target_annotation:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+        
+    # Ensure chat_messages list exists
+    if target_annotation.content.chat_messages is None:
+        target_annotation.content.chat_messages = []
+        
+    target_annotation.content.chat_messages.append(message)
+    
+    # Update type if it was just a highlight before?
+    # Maybe strict typing matters, but for now we just save content.
+    if target_annotation.type == 'highlight':
+         target_annotation.type = 'chat_thread'
+
+    try:
+        update_annotation_in_disk(BOOKS_DIR, book_id, target_annotation)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
     """Lists all available processed books."""
