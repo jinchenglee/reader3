@@ -83,6 +83,8 @@
     }
 
     #chat-context {
+        position: relative;
+        /* Anchor for absolute positioned buttons */
         font-size: 0.8em;
         color: #666;
         margin-bottom: 8px;
@@ -93,7 +95,7 @@
         display: none;
         max-height: 100px;
         overflow-y: auto;
-        white-space: pre-wrap;
+        /* white-space: pre-wrap; Removed to allow normal wrapping */
     }
 
     .chat-controls {
@@ -222,9 +224,15 @@
 
     <div class="chat-input-area">
         <div id="chat-context">
-            <span id="chat-context-text"></span>
-            <button id="clear-context-btn" title="Clear selection"
-                style="float:right; background:none; border:none; cursor:pointer; color:#999; font-size:1.1em; padding:0 4px; line-height:1;">×</button>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div id="chat-context-text" style="padding-right:8px; white-space: normal;"></div>
+                <div style="display:flex; flex-direction:column; gap:2px; flex-shrink:0;">
+                    <button id="chat-context-highlight" title="Highlight this text"
+                        style="background:none; border:none; cursor:pointer; font-size:1.1em; padding:2px;">🖍️</button>
+                    <button id="chat-context-close" title="Clear context"
+                        style="background:none; border:none; cursor:pointer; font-size:1.1em; color:#999; padding:2px;">✕</button>
+                </div>
+            </div>
         </div>
         <div class="chat-controls">
             <textarea id="chat-input" placeholder="Ask a question..." rows="1"></textarea>
@@ -279,14 +287,16 @@
     const chatInput = document.getElementById('chat-input');
     const sendBtn = document.getElementById('send-btn');
     const contextDiv = document.getElementById('chat-context');
+    const contextTextSpan = document.getElementById('chat-context-text'); // Moved declaration here
+    const contextClose = document.getElementById('chat-context-close'); // New button
 
-    let currentSelectedContext = "";
+    let currentSelectedContext = null; // Changed to null for clarity
+
     let chatHistory = []; // In-memory list of {role, content}
 
     // Exposed function for external scripts to update context
     window.updateChatContext = function (text) {
         currentSelectedContext = text;
-        const contextTextSpan = document.getElementById('chat-context-text');
         if (text) {
             contextDiv.style.display = 'block';
             contextTextSpan.textContent = `Selected: "${text.substring(0, 100)}..."`;
@@ -297,11 +307,24 @@
     };
 
     // Clear context button
-    document.getElementById('clear-context-btn').addEventListener('click', function () {
-        currentSelectedContext = "";
+    contextClose.onclick = () => {
+        currentSelectedContext = null;
         contextDiv.style.display = 'none';
-        document.getElementById('chat-context-text').textContent = '';
-    });
+    };
+
+    const contextHighlight = document.getElementById('chat-context-highlight');
+    if (contextHighlight) {
+        contextHighlight.onclick = () => {
+            if (currentSelectedContext && window.handleHighlightFromChat) {
+                window.handleHighlightFromChat(currentSelectedContext);
+                // Clear context on success
+                currentSelectedContext = null;
+                contextDiv.style.display = 'none';
+            } else {
+                console.warn("handleHighlightFromChat not defined or no context");
+            }
+        };
+    }
 
     // --- Chat History Persistence ---
     function getBookId() {
@@ -373,8 +396,8 @@
                 details.style.fontSize = "0.9em";
 
                 const summary = document.createElement('summary');
-                // Create preview text (first 100 chars)
-                const previewText = context.length > 100 ? context.substring(0, 100) + "..." : context;
+                // Create preview text (first 30 chars)
+                const previewText = context.length > 30 ? context.substring(0, 30) + "..." : context;
                 summary.textContent = "Quoted: " + previewText;
                 summary.style.cursor = "pointer";
                 summary.style.padding = "4px 8px";

@@ -860,8 +860,8 @@
             return selection.toString().trim();
         }
 
-        async function triggerAnnotation(type) {
-            const quote = getSelectedQuote();
+        async function triggerAnnotation(type, textOverride) {
+            const quote = textOverride || getSelectedQuote();
             if (!quote) return;
 
             selectionMenu.style.display = 'none';
@@ -899,6 +899,14 @@
                 console.error("Failed to create annotation", e);
             }
         }
+
+        // New function to handle highlight request from Chat Component
+        window.handleHighlightFromChat = function (text) {
+            // For EPUB, we rely on text matching in the current chapter
+            if (text) {
+                triggerAnnotation('highlight', text);
+            }
+        };
 
         function triggerAskAI() {
             const selection = window.getSelection();

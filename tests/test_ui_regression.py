@@ -238,4 +238,10 @@ def test_regression_chat_history_format_parsing(client, create_test_epub):
     assert "Context:\\n\"\"\"" in text, "Chat component missing context detection logic"
     assert "document.createElement('details')" in text, "Chat component missing <details> creation"
     assert "document.createElement('summary')" in text, "Chat component missing <summary> creation"
-    assert "summary.textContent = \"Quoted: \"" in text, "Chat component missing 'Quoted:' label"
+    # Verify truncation logic (30 chars) and new "Quoted: " label
+    assert "context.substring(0, 30)" in text, "Chat component missing 30-char truncation"
+    assert 'summary.textContent = "Quoted: "' in text, "Chat component missing 'Quoted:' label"
+    
+    # Verify Highlight button
+    assert 'id="chat-context-highlight"' in text, "Chat component missing highlight button"
+    assert 'window.handleHighlightFromChat' in text, "Chat component missing handleHighlightFromChat call"

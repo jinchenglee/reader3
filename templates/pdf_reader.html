@@ -704,8 +704,13 @@
             } else if (e.key === 'ArrowRight') {
                 e.preventDefault();
                 onNextPage();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                document.getElementById('pdf-scroll-container').scrollBy({ top: -50, behavior: 'auto' });
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                document.getElementById('pdf-scroll-container').scrollBy({ top: 50, behavior: 'auto' });
             }
-            // Up/Down arrows will bubble/default to scrolling the container naturally
         });
 
         // --- Text Selection & Context - Override/Hook ---
@@ -804,8 +809,10 @@
                 target: {
                     chapter_index: 0, // PDF treats whole file as chap 0 for now
                     page_num: currentSelectionRect.page_num,
+                    // Restore 'rect' for backward compatibility / robustness
                     rect: [currentSelectionRect.x, currentSelectionRect.y, currentSelectionRect.w, currentSelectionRect.h],
-                    rects: currentSelectionRect.rects, // Send the list of rects
+                    // rects are already normalized in mouseup handler
+                    rects: currentSelectionRect.rects,
                     quote: currentSelectionQuote
                 },
                 content: {
@@ -816,7 +823,8 @@
 
             try {
                 const resp = await fetch(`/api/annotations/${bookId}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
@@ -829,9 +837,22 @@
                     window.RightSidebar.openThread(data.id, "Explain this context: " + currentSelectionQuote);
                 }
             } catch (e) {
-                console.error(e);
+                console.error("Failed to create annotation", e);
             }
         }
+
+        // New function to handle highlight request from Chat Component
+        window.handleHighlightFromChat = function (text) {
+            // Verify if the current selection matches the text
+            // This ensures we are highlighting what the user thinks we are highlighting
+            if (currentSelectionQuote && currentSelectionQuote === text) {
+                // We have the rects cached in currentSelectionRect
+                triggerAnnotation('highlight');
+            } else {
+                console.warn("Cannot highlight from chat: selection mismatch or lost.");
+                alert("Cannot highlight: Original selection lost. Please re-select text.");
+            }
+        };
 
         function triggerAskAI() {
             const selectionMenu = document.getElementById('selection-menu');
@@ -935,8 +956,8 @@
                             div.style.left = (r[0] * 100) + '%';
                             div.style.top = (r[1] * 100) + '%';
                             div.style.width = (r[2] * 100) + '%';
-                            // Adjust height to raise the underline (0.65 ratio as requested)
-                            div.style.height = (r[3] * 100 * 0.65) + '%';
+                            // Adjust height to raise the underline (0.9 ratio as requested)
+                            div.style.height = (r[3] * 100 * 0.9) + '%';
 
                             div.dataset.id = ann.id;
 
