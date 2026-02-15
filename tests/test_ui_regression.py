@@ -214,3 +214,28 @@ def test_regression_epub_annotation_navigate_and_reload(client, create_test_epub
     assert "ann-edit-btn" in text and "ann-delete-btn" in text, "EPUB: edit/delete use data-id buttons to allow edit-again"
     assert "chapterAnns" in text and "chapter_index === chapterIndex" in text, "EPUB: annotations list must be per-section (current chapter only)"
     assert "findRangeForQuote" in text or "extractContents" in text, "EPUB: multi-node range for highlight visibility across elements"
+
+
+def test_regression_chat_history_format_parsing(client, create_test_epub):
+    """
+    Step Id: 54
+    User requested: Chat history should include quoted text in a foldable format.
+    The frontend JS (chat_component.html) detects "Context:\\n\\"\\"\\"..." pattern
+    and renders a <details> element.
+    
+    This test verifies:
+    1. The JS logic checks for `text.startsWith('Context:\\n\\"\\"\\"')`
+    2. The JS logic creates a `details` element.
+    3. The JS logic creates a `summary` element.
+    """
+    book_id = create_test_epub("test_chat_format")
+    # Chat component is included in read page
+    resp = client.get(f"/read/{book_id}")
+    assert resp.status_code == 200
+    text = resp.text
+    
+    # Check for the specific parsing logic we added
+    assert "Context:\\n\"\"\"" in text, "Chat component missing context detection logic"
+    assert "document.createElement('details')" in text, "Chat component missing <details> creation"
+    assert "document.createElement('summary')" in text, "Chat component missing <summary> creation"
+    assert "summary.textContent = \"Quoted: \"" in text, "Chat component missing 'Quoted:' label"

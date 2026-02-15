@@ -351,7 +351,56 @@
     function appendMessageToUI(role, text) {
         const div = document.createElement('div');
         div.className = `message msg-${role}`;
-        div.textContent = text;
+
+        // Check for specific context format in USER messages
+        // Format: Context:\n"""..."""\n\nQuestion: ...
+        if (role === 'user' && text.startsWith('Context:\n"""')) {
+            const parts = text.split('"""\n\nQuestion: ');
+            if (parts.length === 2) {
+                const context = parts[0].replace('Context:\n"""', '');
+                const question = parts[1];
+
+                // Render Question first
+                const qDiv = document.createElement('div');
+                qDiv.textContent = question;
+                div.appendChild(qDiv);
+
+                // Render Foldable Context
+                const details = document.createElement('details');
+                details.style.marginTop = "8px";
+                details.style.border = "1px solid rgba(255,255,255,0.3)";
+                details.style.borderRadius = "4px";
+                details.style.fontSize = "0.9em";
+
+                const summary = document.createElement('summary');
+                // Create preview text (first 100 chars)
+                const previewText = context.length > 100 ? context.substring(0, 100) + "..." : context;
+                summary.textContent = "Quoted: " + previewText;
+                summary.style.cursor = "pointer";
+                summary.style.padding = "4px 8px";
+                summary.style.outline = "none";
+                summary.style.fontWeight = "500";
+                summary.style.opacity = "0.9";
+
+                const p = document.createElement('p');
+                p.textContent = context;
+                p.style.margin = "0";
+                p.style.padding = "8px";
+                // p.style.backgroundColor = "rgba(0,0,0,0.05)"; 
+                p.style.backgroundColor = "rgba(255,255,255,0.1)";
+                p.style.whiteSpace = "pre-wrap";
+                p.style.color = "#eee";
+
+                details.appendChild(summary);
+                details.appendChild(p);
+                div.appendChild(details);
+            } else {
+                div.textContent = text;
+            }
+        } else {
+            div.textContent = text;
+        }
+
         chatMessages.appendChild(div);
         chatMessages.scrollTop = chatMessages.scrollHeight;
         return div;
@@ -367,15 +416,16 @@
         const finalPrompt = text || "Explain this";
         const contextSnapshot = currentSelectedContext;
 
-        appendMessage('user', finalPrompt);
-        chatInput.value = "";
-
-        // Save user message to history
+        // Save proper user message with context to history
         const userContent = contextSnapshot
             ? `Context:\n"""${contextSnapshot}"""\n\nQuestion: ${finalPrompt}`
             : finalPrompt;
-        chatHistory.push({ role: 'user', content: finalPrompt });
-        saveChatMessage('user', finalPrompt);
+
+        appendMessage('user', userContent);
+        chatInput.value = "";
+
+        chatHistory.push({ role: 'user', content: userContent });
+        saveChatMessage('user', userContent);
 
         const loadingMsg = appendMessage('ai', 'Thinking...');
         loadingMsg.innerHTML = '<div class="spinner"></div>';
@@ -428,7 +478,7 @@
 
         // Add the current user message with context
         if (contextSnapshot) {
-            messages.push({ role: "user", content: `Context:\n"""${contextSnapshot}"""\n\nQuestion: ${finalPrompt}` });
+            messages.push({ role: "user", content: userContent });
         } else {
             messages.push({ role: "user", content: finalPrompt });
         }

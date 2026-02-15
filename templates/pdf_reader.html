@@ -935,7 +935,8 @@
                             div.style.left = (r[0] * 100) + '%';
                             div.style.top = (r[1] * 100) + '%';
                             div.style.width = (r[2] * 100) + '%';
-                            div.style.height = (r[3] * 100) + '%';
+                            // Adjust height to raise the underline (0.65 ratio as requested)
+                            div.style.height = (r[3] * 100 * 0.65) + '%';
 
                             div.dataset.id = ann.id;
 
