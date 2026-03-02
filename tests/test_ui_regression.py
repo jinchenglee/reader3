@@ -245,3 +245,111 @@ def test_regression_chat_history_format_parsing(client, create_test_epub):
     # Verify Highlight button
     assert 'id="chat-context-highlight"' in text, "Chat component missing highlight button"
     assert 'window.handleHighlightFromChat' in text, "Chat component missing handleHighlightFromChat call"
+
+
+def test_mobile_touch_selection_support(client, create_test_epub, create_test_pdf):
+    """
+    Verifies that both EPUB and PDF readers support touch-device text selection.
+    On touch devices (pointer: coarse), a persistent header action bar replaces
+    the floating popup (which conflicts with the iOS native selection toolbar).
+    """
+    epub_id = create_test_epub("test_touch_epub")
+    pdf_id = create_test_pdf("test_touch_pdf")
+
+    resp_epub = client.get(f"/read/{epub_id}")
+    assert resp_epub.status_code == 200
+
+    resp_pdf = client.get(f"/read/{pdf_id}")
+    assert resp_pdf.status_code == 200
+
+    for label, text in [("EPUB", resp_epub.text), ("PDF", resp_pdf.text)]:
+        assert 'id="touch-action-bar"' in text, f"{label}: touch-action-bar element missing"
+        assert 'pointer: coarse' in text, f"{label}: touch detection media query missing"
+        assert 'selectionchange' in text, f"{label}: selectionchange listener missing"
+        assert 'isTouchPrimary' in text, f"{label}: isTouchPrimary guard variable missing"
+        assert 'mouseup' in text, f"{label}: mouseup handler (desktop path) must still be present"
+        # Touch bar buttons must wire to the correct handlers
+        assert "onclick=\"triggerAnnotation('highlight')\"" in text, \
+            f"{label}: touch-action-bar Highlight button must call triggerAnnotation('highlight')"
+        assert 'onclick="triggerAskAI()"' in text, \
+            f"{label}: touch-action-bar Ask AI button must call triggerAskAI()"
+
+    # PDF refactors selection logic into a reusable helper so both mouseup and
+    # selectionchange can call it without duplicating code
+    assert 'computePdfSelectionState' in resp_pdf.text, \
+        "PDF: computePdfSelectionState helper must exist for shared mouseup/selectionchange logic"
+
+
+def test_mobile_viewport_dvh_fix(client, create_test_epub, create_test_pdf):
+    """
+    Both readers use 100dvh (dynamic viewport height) so the layout fits the
+    actual visible area on iOS/Android when browser chrome (address/toolbar) is shown.
+    100vh is kept as a fallback for browsers that don't support dvh.
+    viewport-fit=cover is required so the layout is not inset from the screen
+    edges on devices with notches / Face ID.
+    """
+    epub_id = create_test_epub("test_dvh_epub")
+    pdf_id = create_test_pdf("test_dvh_pdf")
+
+    for label, book_id in [("EPUB", epub_id), ("PDF", pdf_id)]:
+        text = client.get(f"/read/{book_id}").text
+        assert '100dvh' in text, \
+            f"{label}: must use 100dvh for dynamic viewport height on mobile"
+        assert '100vh' in text, \
+            f"{label}: must keep 100vh as fallback for browsers without dvh support"
+        assert 'viewport-fit=cover' in text, \
+            f"{label}: viewport-fit=cover required for safe-area handling on notched devices"
+
+
+def test_epub_touch_quote_caching(client, create_test_epub):
+    """
+    On iOS, tapping a button clears the text selection before the JS onclick
+    handler runs.  The EPUB reader caches the selected quote in currentEpubQuote
+    when selectionchange fires so that triggerAnnotation and triggerAskAI can
+    still read it after the selection has been cleared by the tap.
+
+    Also verifies that the containment check uses closest() (upward DOM traversal,
+    same as the PDF pattern) instead of contains(), which is more robust for the
+    anchor nodes that iOS produces.
+    """
+    book_id = create_test_epub("test_epub_quote_cache")
+    text = client.get(f"/read/{book_id}").text
+
+    # Cache variable declared
+    assert 'currentEpubQuote' in text, \
+        "EPUB: currentEpubQuote cache variable must be declared"
+
+    # Containment check uses closest() not contains()
+    assert "closest('#book-content-div')" in text, \
+        "EPUB: selectionchange must use closest('#book-content-div') for anchor node check"
+
+    # triggerAnnotation falls back to cached quote when live selection is gone
+    assert "getSelectedQuote() || currentEpubQuote" in text, \
+        "EPUB: triggerAnnotation must fall back to currentEpubQuote if selection was cleared by tap"
+
+    # triggerAskAI falls back to cached quote when live selection is gone
+    assert "toString().trim() || currentEpubQuote" in text, \
+        "EPUB: triggerAskAI must fall back to currentEpubQuote if selection was cleared by tap"
+
+
+def test_epub_highlight_immediate_feedback(client, create_test_epub):
+    """
+    After creating a highlight annotation the sidebar should open to the
+    annotations list immediately (same UX as notes and PDF).
+    openThread() scrolls the new span into view and forces a compositor
+    repaint on iOS — without this call the yellow span is invisible until
+    another action triggers a re-render.
+
+    Also verifies that clicking an existing highlight span opens the sidebar
+    to that specific annotation (openThread), not just the generic open().
+    """
+    book_id = create_test_epub("test_epub_hl_feedback")
+    text = client.get(f"/read/{book_id}").text
+
+    # After creating a highlight, openThread is called (not skipped like before)
+    assert "type === 'note' || type === 'highlight'" in text, \
+        "EPUB: triggerAnnotation must call openThread for both 'note' and 'highlight' types"
+
+    # Clicking an existing highlight span must call openThread (not bare open())
+    assert "RightSidebar.openThread(ann.id)" in text, \
+        "EPUB: highlight span onclick must call openThread(ann.id) to navigate the sidebar"

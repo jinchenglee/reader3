@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>{{ book.metadata.title }}</title>
     <!-- PDF.js Styles -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
@@ -18,7 +18,8 @@
             padding: 0;
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            height: 100vh; /* fallback */
+            height: 100dvh; /* mobile: tracks actual visible area as browser chrome shows/hides */
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
@@ -93,7 +94,8 @@
         #main-container {
             display: flex;
             flex: 1;
-            height: calc(100vh - var(--header-height));
+            height: calc(100vh - var(--header-height)); /* fallback */
+            height: calc(100dvh - var(--header-height));
             overflow: hidden;
         }
 
@@ -229,6 +231,10 @@
                 style="font-size: 0.9em; border: 1px solid #555;" onclick="window.RightSidebar.toggle()">💬
                 Chat</button>
         </div>
+        <div id="touch-action-bar" style="display:none; align-items:center; gap:6px;">
+            <button onclick="triggerAnnotation('highlight')">Highlight</button>
+            <button onclick="triggerAskAI()">Ask AI</button>
+        </div>
     </header>
 
     <div id="main-container">
@@ -302,6 +308,16 @@
 
         #selection-menu button:hover {
             background: #555;
+            border-radius: 3px;
+        }
+
+        #touch-action-bar button {
+            background: #3d5166;
+            border: 1px solid #aaa;
+            color: white;
+            cursor: pointer;
+            padding: 4px 10px;
+            font-size: 0.85em;
             border-radius: 3px;
         }
 
@@ -719,90 +735,101 @@
         // Replacing legacy hook with Annotation System
 
         const selectionMenu = document.getElementById('selection-menu');
+        const isTouchPrimary = window.matchMedia('(pointer: coarse)').matches;
+        const touchActionBar = document.getElementById('touch-action-bar');
 
         let currentSelectionRect = null; // Stored as { pageNum, x, y, w, h } (normalized 0-1)
         let currentSelectionQuote = "";
 
-        document.addEventListener('mouseup', (e) => {
+        function computePdfSelectionState() {
             const selection = window.getSelection();
-            if (selection.toString().trim().length > 0) {
-                // Check if inside a page container
-                const pageContainer = selection.anchorNode.parentElement.closest('.page-container');
-                if (pageContainer) {
-                    // Which page?
-                    const containerId = pageContainer.id; // page-container-1 or -2
-                    // Map container to actual PDF page number
-                    let targetPageNum;
-                    if (containerId === 'page-container-1') {
-                        targetPageNum = dualPageMode ? pageNum : pageNum; // left page is always 'pageNum' in logic
-                    } else {
-                        targetPageNum = pageNum + 1;
-                    }
+            if (!selection || selection.toString().trim().length === 0) return false;
+            const pageContainer = selection.anchorNode?.parentElement?.closest('.page-container');
+            if (!pageContainer) return false;
 
-                    // Normalize rects relative to the CANVAS / Container
-                    const range = selection.getRangeAt(0);
-                    const clientRects = range.getClientRects();
-                    const pageContainerRect = pageContainer.getBoundingClientRect();
+            const containerId = pageContainer.id;
+            let targetPageNum;
+            if (containerId === 'page-container-1') {
+                targetPageNum = pageNum;
+            } else {
+                targetPageNum = pageNum + 1;
+            }
 
-                    // Canvas is the reference for coordinate normalization (0-1)
-                    const canvasEl = pageContainer.querySelector('canvas');
-                    const refRect = canvasEl ? canvasEl.getBoundingClientRect() : pageContainerRect;
-                    const refW = refRect.width || 1;
-                    const refH = refRect.height || 1;
+            const range = selection.getRangeAt(0);
+            const clientRects = range.getClientRects();
+            const pageContainerRect = pageContainer.getBoundingClientRect();
 
-                    let rectsList = [];
+            const canvasEl = pageContainer.querySelector('canvas');
+            const refRect = canvasEl ? canvasEl.getBoundingClientRect() : pageContainerRect;
+            const refW = refRect.width || 1;
+            const refH = refRect.height || 1;
 
-                    for (let i = 0; i < clientRects.length; i++) {
-                        const r = clientRects[i];
-                        // Calculate relative coordinates
-                        const x = (r.left - refRect.left) / refW;
-                        const y = (r.top - refRect.top) / refH;
-                        const w = r.width / refW;
-                        const h = r.height / refH;
-
-                        // Filter out tiny/invalid rects
-                        if (w > 0.001 && h > 0.001) {
-                            rectsList.push([
-                                Math.max(0, Math.min(1, x)),
-                                Math.max(0, Math.min(1, y)),
-                                Math.max(0, Math.min(1, w)),
-                                Math.max(0, Math.min(1, h))
-                            ]);
-                        }
-                    }
-
-                    if (rectsList.length > 0) {
-                        // Position menu based on the first rect or the bounding rect of the range
-                        const boundRect = range.getBoundingClientRect();
-                        selectionMenu.style.display = 'flex';
-                        selectionMenu.style.top = (window.scrollY + boundRect.top - 40) + 'px';
-                        selectionMenu.style.left = (window.scrollX + boundRect.left + boundRect.width / 2 - 75) + 'px';
-
-                        currentSelectionRect = {
-                            page_num: targetPageNum,
-                            // Fallback single rect for legacy or logic that expects it (first rect or bounding)
-                            x: rectsList[0][0],
-                            y: rectsList[0][1],
-                            w: rectsList[0][2],
-                            h: rectsList[0][3],
-                            // IMPORTANT: Store the full list of rects
-                            rects: rectsList
-                        };
-                        currentSelectionQuote = selection.toString().trim();
-                        return;
-                    }
+            let rectsList = [];
+            for (let i = 0; i < clientRects.length; i++) {
+                const r = clientRects[i];
+                const x = (r.left - refRect.left) / refW;
+                const y = (r.top - refRect.top) / refH;
+                const w = r.width / refW;
+                const h = r.height / refH;
+                if (w > 0.001 && h > 0.001) {
+                    rectsList.push([
+                        Math.max(0, Math.min(1, x)),
+                        Math.max(0, Math.min(1, y)),
+                        Math.max(0, Math.min(1, w)),
+                        Math.max(0, Math.min(1, h))
+                    ]);
                 }
+            }
+
+            if (rectsList.length === 0) return false;
+
+            currentSelectionRect = {
+                page_num: targetPageNum,
+                x: rectsList[0][0],
+                y: rectsList[0][1],
+                w: rectsList[0][2],
+                h: rectsList[0][3],
+                rects: rectsList
+            };
+            currentSelectionQuote = selection.toString().trim();
+            return true;
+        }
+
+        document.addEventListener('mouseup', (e) => {
+            const found = computePdfSelectionState();
+            if (found) {
+                if (!isTouchPrimary) {
+                    const selection = window.getSelection();
+                    const range = selection.getRangeAt(0);
+                    const boundRect = range.getBoundingClientRect();
+                    selectionMenu.style.display = 'flex';
+                    selectionMenu.style.top = (window.scrollY + boundRect.top - 40) + 'px';
+                    selectionMenu.style.left = (window.scrollX + boundRect.left + boundRect.width / 2 - 75) + 'px';
+                }
+                return;
             }
             if (!selectionMenu.contains(e.target)) {
                 selectionMenu.style.display = 'none';
             }
         });
 
+        if (isTouchPrimary) {
+            let touchSelTimer;
+            document.addEventListener('selectionchange', () => {
+                clearTimeout(touchSelTimer);
+                touchSelTimer = setTimeout(() => {
+                    const found = computePdfSelectionState();
+                    if (touchActionBar) touchActionBar.style.display = found ? 'flex' : 'none';
+                }, 300);
+            });
+        }
+
 
         async function triggerAnnotation(type) {
             if (!currentSelectionRect) return;
 
             selectionMenu.style.display = 'none';
+            if (touchActionBar) touchActionBar.style.display = 'none';
 
             const payload = {
                 type: (type === 'ask') ? 'chat_thread' : type,
@@ -857,6 +884,7 @@
         function triggerAskAI() {
             const selectionMenu = document.getElementById('selection-menu');
             selectionMenu.style.display = 'none';
+            if (touchActionBar) touchActionBar.style.display = 'none';
             if (currentSelectionQuote) {
                 if (window.RightSidebar && window.RightSidebar.openGlobalChat) {
                     window.RightSidebar.openGlobalChat(currentSelectionQuote);

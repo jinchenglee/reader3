@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>{{ book.metadata.title }}</title>
     <style>
         /* Shared variables */
@@ -18,7 +18,8 @@
             padding: 0;
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            height: 100vh; /* fallback */
+            height: 100dvh; /* mobile: tracks actual visible area as browser chrome shows/hides */
             overflow: hidden;
             font-family: "Georgia", serif;
             background: #fff;
@@ -331,6 +332,10 @@
                 style="font-size: 0.9em; border: 1px solid #555;" onclick="window.RightSidebar.toggle()">💬
                 Chat</button>
         </div>
+        <div id="touch-action-bar" style="display:none; align-items:center; gap:6px;">
+            <button onclick="triggerAnnotation('highlight')">Highlight</button>
+            <button onclick="triggerAskAI()">Ask AI</button>
+        </div>
     </header>
 
     <!-- MAIN AREA -->
@@ -442,6 +447,16 @@
 
         #selection-menu button:hover {
             background: #555;
+            border-radius: 3px;
+        }
+
+        #touch-action-bar button {
+            background: #3d5166;
+            border: 1px solid #aaa;
+            color: white;
+            cursor: pointer;
+            padding: 4px 10px;
+            font-size: 0.85em;
             border-radius: 3px;
         }
 
@@ -831,6 +846,9 @@
 
         // --- Annotation System ---
         const selectionMenu = document.getElementById('selection-menu');
+        const isTouchPrimary = window.matchMedia('(pointer: coarse)').matches;
+        const touchActionBar = document.getElementById('touch-action-bar');
+        let currentEpubQuote = ""; // cached for touch: tap clears selection before handler runs
 
         document.addEventListener('mouseup', (e) => {
             const selection = window.getSelection();
@@ -838,13 +856,15 @@
                 // If selection is inside book content
                 const contentDiv = document.getElementById('book-content-div');
                 if (contentDiv.contains(selection.anchorNode)) {
-                    // Show menu
-                    const range = selection.getRangeAt(0);
-                    const rect = range.getBoundingClientRect();
+                    if (!isTouchPrimary) {
+                        // Show floating menu (desktop only)
+                        const range = selection.getRangeAt(0);
+                        const rect = range.getBoundingClientRect();
 
-                    selectionMenu.style.display = 'flex';
-                    selectionMenu.style.top = (window.scrollY + rect.top - 40) + 'px';
-                    selectionMenu.style.left = (window.scrollX + rect.left + rect.width / 2 - 75) + 'px';
+                        selectionMenu.style.display = 'flex';
+                        selectionMenu.style.top = (window.scrollY + rect.top - 40) + 'px';
+                        selectionMenu.style.left = (window.scrollX + rect.left + rect.width / 2 - 75) + 'px';
+                    }
                     return;
                 }
             }
@@ -854,6 +874,25 @@
             }
         });
 
+        if (isTouchPrimary) {
+            let touchSelTimer;
+            document.addEventListener('selectionchange', () => {
+                clearTimeout(touchSelTimer);
+                touchSelTimer = setTimeout(() => {
+                    const selection = window.getSelection();
+                    const text = selection ? selection.toString().trim() : '';
+                    // Use closest() (like PDF) — more robust than contains() for touch anchor nodes
+                    const inContent = !!selection?.anchorNode?.parentElement?.closest('#book-content-div');
+                    if (text.length > 0 && inContent) {
+                        currentEpubQuote = text; // cache before tap clears it
+                        touchActionBar.style.display = 'flex';
+                    } else {
+                        touchActionBar.style.display = 'none';
+                    }
+                }, 300);
+            });
+        }
+
         // Current temporary selection state
         function getSelectedQuote() {
             const selection = window.getSelection();
@@ -861,10 +900,13 @@
         }
 
         async function triggerAnnotation(type, textOverride) {
-            const quote = textOverride || getSelectedQuote();
+            // On touch: tap clears the selection before this runs, so fall back to cached quote
+            const quote = textOverride || getSelectedQuote() || currentEpubQuote;
             if (!quote) return;
 
             selectionMenu.style.display = 'none';
+            if (touchActionBar) touchActionBar.style.display = 'none';
+            currentEpubQuote = "";
 
             // Create annotation
             const payload = {
@@ -890,8 +932,8 @@
                 // Refresh highlights
                 await loadAnnotations();
 
-                // If Note or Ask, open sidebar immediately
-                if (type === 'note') {
+                // Open sidebar to the annotation for all created annotation types
+                if (type === 'note' || type === 'highlight') {
                     window.RightSidebar.openThread(data.id);
                 }
                 // Ask is now handled by triggerAskAI
@@ -909,11 +951,13 @@
         };
 
         function triggerAskAI() {
-            const selection = window.getSelection();
-            const text = selection.toString().trim();
+            // On touch: tap clears the selection before this runs, so fall back to cached quote
+            const text = window.getSelection().toString().trim() || currentEpubQuote;
 
             // Clean up selection menu
             document.getElementById('selection-menu').style.display = 'none';
+            if (touchActionBar) touchActionBar.style.display = 'none';
+            currentEpubQuote = "";
 
             if (text) {
                 if (window.RightSidebar && window.RightSidebar.openGlobalChat) {
@@ -1032,8 +1076,7 @@
 
                 span.onclick = (e) => {
                     e.stopPropagation();
-                    window.activateHighlight(ann.id);
-                    if (window.RightSidebar) window.RightSidebar.open();
+                    if (window.RightSidebar) window.RightSidebar.openThread(ann.id);
                 };
 
                 try {
