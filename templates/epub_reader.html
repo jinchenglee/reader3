@@ -27,12 +27,14 @@
 
         /* Header / Toolbar */
         #epub-header {
-            height: var(--header-height);
+            min-height: var(--header-height);
+            height: auto;
             border-bottom: 1px solid #e9ecef;
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             justify-content: space-between;
-            padding: 0 15px;
+            padding: 5px 15px;
             background: #2c3e50;
             flex-shrink: 0;
             z-index: 10;
@@ -42,6 +44,7 @@
             display: flex;
             align-items: center;
             gap: 15px;
+            min-width: 0;
         }
 
         .header-left .nav-home {
@@ -67,8 +70,12 @@
 
         .header-controls {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
+            justify-content: center;
             gap: 10px;
+            margin: 5px 0;
+            min-width: 0;
         }
 
         .btn-icon {
@@ -209,7 +216,7 @@
             max-width: 800px;
             margin: 0 auto;
             padding: 40px 50px;
-            line-height: 1.8;
+            line-height: 1.6;
             font-size: 1.15em;
             color: #212529;
             /* Zoom support */
@@ -234,7 +241,7 @@
         }
 
         .book-content p {
-            margin-bottom: 1.5em;
+            margin-bottom: 1em;
             text-align: justify;
         }
 
@@ -269,6 +276,18 @@
             pointer-events: none;
             border-color: #ccc;
             color: #ccc;
+        }
+
+        /* Hide native number input spin buttons */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            appearance: none;
+            margin: 0; 
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+            appearance: textfield;
         }
     </style>
 </head>
@@ -989,13 +1008,17 @@
         function renderHighlights(annotations) {
             document.querySelectorAll('.highlight-span').forEach(span => {
                 const parent = span.parentNode;
-                parent.replaceChild(document.createTextNode(span.textContent), span);
-                parent.normalize();
+                while (span.firstChild) {
+                    parent.insertBefore(span.firstChild, span);
+                }
+                parent.removeChild(span);
             });
 
-            const chapterAnns = annotations.filter(a => a.target.chapter_index === chapterIndex);
             const contentDiv = document.getElementById('book-content-div');
             if (!contentDiv) return;
+            contentDiv.normalize();
+
+            const chapterAnns = annotations.filter(a => a.target.chapter_index === chapterIndex);
 
             function normalizeWs(s) {
                 return (s || '').replace(/\s+/g, ' ').trim();
@@ -1066,24 +1089,63 @@
                 const range = findRangeForQuote(contentDiv, quote);
                 if (!range) return;
 
-                const span = document.createElement('span');
-                span.className = 'highlight-span';
-                if (ann.type !== 'highlight') span.classList.add('has-note');
-                span.dataset.id = ann.id;
-                span.style.backgroundColor = 'rgba(255, 235, 59, 0.6)';
-                if (ann.type !== 'highlight') span.style.backgroundColor = 'rgba(221, 221, 221, 0.85)';
-                span.style.cursor = 'pointer';
-
-                span.onclick = (e) => {
-                    e.stopPropagation();
-                    if (window.RightSidebar) window.RightSidebar.openThread(ann.id);
-                };
-
                 try {
-                    const fragment = range.extractContents();
-                    span.appendChild(fragment);
-                    range.insertNode(span);
-                } catch (err) { /* fallback: single-node wrap */ }
+                    const nodesToWrap = [];
+                    const walker = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT, null, false);
+                    let node;
+                    while ((node = walker.nextNode())) {
+                        if (range.intersectsNode(node)) {
+                            let start = 0;
+                            let end = node.nodeValue.length;
+                            if (node === range.startContainer) start = range.startOffset;
+                            if (node === range.endContainer) end = range.endOffset;
+                            if (start < end) {
+                                nodesToWrap.push({ node, start, end });
+                            }
+                        }
+                    }
+                    if (nodesToWrap.length === 0 && range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+                        nodesToWrap.push({ node: range.startContainer, start: range.startOffset, end: range.endOffset });
+                    }
+                    
+                    // Process backwards to avoid messing up offsets when a node is split multiple times or neighboring nodes change
+                    nodesToWrap.reverse().forEach(info => {
+                        const textNode = info.node;
+                        const text = textNode.nodeValue;
+                        const before = text.substring(0, info.start);
+                        const middle = text.substring(info.start, info.end);
+                        const after = text.substring(info.end);
+                        
+                        // Only wrap if there is actual text content (ignoring pure empty splits)
+                        if (middle.length === 0) return;
+                        
+                        const parent = textNode.parentNode;
+                        if (after.length > 0) parent.insertBefore(document.createTextNode(after), textNode.nextSibling);
+                        
+                        const newSpan = document.createElement('span');
+                        newSpan.className = 'highlight-span';
+                        if (ann.type !== 'highlight') newSpan.classList.add('has-note');
+                        newSpan.dataset.id = ann.id;
+                        newSpan.style.backgroundColor = 'rgba(255, 235, 59, 0.6)';
+                        if (ann.type !== 'highlight') newSpan.style.backgroundColor = 'rgba(221, 221, 221, 0.85)';
+                        newSpan.style.cursor = 'pointer';
+                        newSpan.onclick = (e) => {
+                            if (!newSpan.closest('a')) {
+                                e.stopPropagation();
+                            }
+                            if (window.RightSidebar) window.RightSidebar.openThread(ann.id);
+                        };
+                        newSpan.textContent = middle;
+                        parent.insertBefore(newSpan, textNode.nextSibling);
+
+                        // If before is empty, we completely replace the text node
+                        if (before.length === 0) {
+                            parent.removeChild(textNode);
+                        } else {
+                            textNode.nodeValue = before;
+                        }
+                    });
+                } catch (err) { console.error('Highlight error', err); }
             });
         }
 

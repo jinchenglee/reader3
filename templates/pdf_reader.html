@@ -26,12 +26,14 @@
 
         /* Header */
         header {
-            height: var(--header-height);
+            min-height: var(--header-height);
+            height: auto;
             background: #2c3e50;
             color: white;
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
-            padding: 0 15px;
+            padding: 5px 15px;
             border-bottom: 1px solid #444;
             flex-shrink: 0;
             justify-content: space-between;
@@ -42,6 +44,7 @@
             display: flex;
             align-items: center;
             gap: 15px;
+            min-width: 0;
         }
 
         .nav-home {
@@ -64,8 +67,12 @@
 
         .header-controls {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
+            justify-content: center;
             gap: 10px;
+            margin: 5px 0;
+            min-width: 0;
         }
 
         .btn-icon {
@@ -195,6 +202,18 @@
             border-bottom: 1px solid #ddd;
             margin-bottom: 5px;
         }
+
+        /* Hide native number input spin buttons */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            appearance: none;
+            margin: 0; 
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
     </style>
 </head>
 
@@ -211,7 +230,7 @@
             <button class="btn-icon" id="prev-page" title="Previous Page">◀</button>
             <span class="page-info">
                 Page
-                <input type="number" id="page-num-input" value="--"
+                <input type="number" id="page-num-input" value="1"
                     style="width: 50px; text-align: center; background: #34495e; color: white; border: 1px solid #555; border-radius: 4px; padding: 2px;">
                 / <span id="page-count">--</span>
             </span>
@@ -503,12 +522,8 @@
                     }
                 });
 
-                // Update page display
-                if (rightPageNum <= pdfDoc.numPages) {
-                    document.getElementById('page-num-input').value = leftPageNum + '-' + rightPageNum;
-                } else {
-                    document.getElementById('page-num-input').value = leftPageNum;
-                }
+                // Update page display - always show left page number
+                document.getElementById('page-num-input').value = leftPageNum;
             } else {
                 // Single page mode
                 pageContainer2.style.display = 'none';
